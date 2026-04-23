@@ -1,0 +1,31 @@
+# ============================================================
+# TrustNet AI — Root .gitignore
+# ============================================================
+
+# Environment variables — NEVER commit
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Extension generated config (values filled from .env)
+# Uncomment if you add a build step that auto-fills config.js:
+# extension/config.js
+
+# Dependencies
+node_modules/
+functions/node_modules/
+
+# Build outputs
+dist/
+build/
+.firebase/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
