@@ -34,6 +34,10 @@ export const CONFIG = {
   // ── Cloudflare DNS-over-HTTPS (no key needed) ─────────────
   DOH_ENDPOINT: 'https://cloudflare-dns.com/dns-query',
 
+  // ── Supabase ─────────────────────────────────────────────
+  SUPABASE_URL:      'https://ggixcidyxrfnaqxzfnov.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_7ZEhP0mn0v8u3kwdVMKagA_fjNhu5Xr',
+
   // ── Runtime settings ─────────────────────────────────────
   UPDATE_INTERVAL_MS:  30000,
   SCORE_DECAY_FACTOR:  0.95,

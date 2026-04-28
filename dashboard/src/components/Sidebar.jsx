@@ -13,6 +13,7 @@ const NAV_ITEMS = [
 
 const CONFIG_ITEMS = [
   { id: 'settings',   icon: '⚙️',  label: 'Settings'          },
+  { id: 'team',       icon: '👥',  label: 'Team Management', ownerOnly: true },
   { id: 'api',        icon: '🔗',  label: 'API Access'        },
   { id: 'compliance', icon: '📄',  label: 'Compliance Reports' },
 ];
@@ -63,7 +64,7 @@ export default function Sidebar({ activePage, setActivePage }) {
         ))}
 
         <div className="nav-section-label" style={{ marginTop: '12px' }}>Configuration</div>
-        {CONFIG_ITEMS.map(item => (
+        {CONFIG_ITEMS.filter(item => !item.ownerOnly || authCtx?.profile?.role === 'owner').map(item => (
           <button
             key={item.id}
             className={`nav-item ${activePage === item.id ? 'active' : ''}`}

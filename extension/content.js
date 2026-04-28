@@ -110,8 +110,120 @@
       outline: 2px solid #FF4757 !important;
       outline-offset: 2px;
     }
+
+    /* Risk/Fraud Feedback Overlay */
+    .tn-risk-overlay {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.95);
+      border: 2px solid #FF4757;
+      border-radius: 16px;
+      padding: 40px;
+      z-index: 2147483647;
+      text-align: center;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+      box-shadow: 0 0 50px rgba(255, 71, 87, 0.5);
+      animation: tnFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 500px;
+    }
+    @keyframes tnFadeIn { from { opacity: 0; transform: translate(-50%, -55%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+    .tn-risk-overlay h1 { font-size: 28px; font-weight: 800; color: #FF4757; margin-bottom: 16px; }
+    .tn-risk-overlay p { font-size: 16px; color: rgba(255,255,255,0.7); line-height: 1.6; margin-bottom: 24px; }
+    .tn-risk-overlay .tn-score-inc { font-size: 48px; font-weight: 900; color: #FF4757; display: block; margin-bottom: 12px; }
+    .tn-risk-overlay button { background: #FF4757; color: #fff; border: none; padding: 12px 30px; border-radius: 8px; font-weight: 700; cursor: pointer; }
   `;
   document.head.appendChild(style);
+
+  // ============================================================
+  // SEARCH MONITORING
+  // ============================================================
+  const RISKY_SEARCH_TERMS = ['illegal', 'drugs', 'weapons', 'hacking', 'darknet', 'scam', 'fraud', 'stolen', 'bypass', 'exploit', 'malware', 'ransomware', 'tor market'];
+
+  function monitorSearches() {
+    const url = new URL(window.location.href);
+    let query = '';
+
+    if (url.hostname.includes('google.com')) {
+      query = url.searchParams.get('q');
+    } else if (url.hostname.includes('bing.com')) {
+      query = url.searchParams.get('q');
+    }
+
+    if (query) {
+      const detectedTerms = RISKY_SEARCH_TERMS.filter(term => query.toLowerCase().includes(term));
+      if (detectedTerms.length > 0) {
+        showRiskIncrease('Risky Search Detected', `Your search for "${query}" contains restricted keywords: ${detectedTerms.join(', ')}. This activity has been flagged for administrative review.`);
+        chrome.runtime.sendMessage({ 
+          type: 'REPORT_ACTIVITY', 
+          activity: { 
+            type: 'RISKY_SEARCH', 
+            detail: `Worker searched for: ${query}`,
+            severity: 'high'
+          } 
+        });
+      }
+    }
+  }
+
+  function showRiskIncrease(title, message) {
+    const overlay = document.createElement('div');
+    overlay.className = 'tn-risk-overlay';
+    overlay.innerHTML = `
+      <h1>⚠️ ${title}</h1>
+      <span class="tn-score-inc">+25% RISK</span>
+      <p>${message}</p>
+      <button onclick="this.closest('.tn-risk-overlay').remove()">I UNDERSTAND</button>
+    `;
+    document.body.appendChild(overlay);
+    setTimeout(() => overlay.remove(), 8000);
+  }
+
+  // ============================================================
+  // CLICK MONITORING
+  // ============================================================
+  function setupClickMonitoring() {
+    document.addEventListener('click', async (e) => {
+      const link = e.target.closest('a');
+      if (!link) return;
+
+      const href = link.href;
+      if (!href || href.startsWith('javascript:') || href.startsWith('#')) return;
+
+      // We use the results already attached to the link by scanLinks
+      const badge = link.nextSibling;
+      if (badge && badge.classList?.contains('trustnet-badge') && badge.classList.contains('danger')) {
+        e.preventDefault();
+        showFraudAlert(href);
+      }
+    }, true); // Capture phase to prevent navigation before we decide
+  }
+
+  function showFraudAlert(url) {
+    const overlay = document.createElement('div');
+    overlay.className = 'tn-risk-overlay';
+    overlay.innerHTML = `
+      <h1>🚫 FRAUD LINK BLOCKED</h1>
+      <span class="tn-score-inc">FRAUD ALERT</span>
+      <p>The link <strong>${url}</strong> has been identified as a phishing or fraud attempt. Navigation has been blocked to protect your credentials and company data.</p>
+      <div style="display:flex; gap:10px; justify-content:center;">
+        <button onclick="this.closest('.tn-risk-overlay').remove()" style="background:rgba(255,255,255,0.1)">Dismiss</button>
+        <button onclick="window.history.back()" style="background:#2ED573">Safety First</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    chrome.runtime.sendMessage({ 
+      type: 'REPORT_ACTIVITY', 
+      activity: { 
+        type: 'FRAUD_CLICK', 
+        detail: `Worker attempted to click on a known fraud link: ${url}`,
+        severity: 'critical'
+      } 
+    });
+  }
 
   // ============================================================
   // STATE
@@ -142,6 +254,12 @@
 
     // Scan visible links
     scanLinks();
+
+    // Monitor searches
+    monitorSearches();
+
+    // Monitor clicks
+    setupClickMonitoring();
 
     // Watch for new links (SPAs)
     const linkObserver = new MutationObserver(() => scanLinks());

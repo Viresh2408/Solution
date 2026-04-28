@@ -1,6 +1,7 @@
 // TrustNet AI — Settings Page
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { seedDatabase } from '../hooks/useTrustNetData';
 
 export default function Settings() {
   const { user } = useAuth();
@@ -13,9 +14,23 @@ export default function Settings() {
     policyTriggered: true,
   });
 
+  const [seeding, setSeeding] = useState(false);
+
   const handleSave = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
+  };
+
+  const handleSeed = async () => {
+    setSeeding(true);
+    try {
+      await seedDatabase();
+      alert('Database seeded successfully! Dashboard is now live.');
+    } catch (err) {
+      alert(`Seeding failed: ${err.message}`);
+    } finally {
+      setSeeding(false);
+    }
   };
 
   return (
@@ -97,6 +112,22 @@ export default function Settings() {
               <button className="btn btn-ghost btn-sm">Revoke All</button>
             </div>
           </div>
+        </div>
+
+        {/* Developer Tools */}
+        <div className="card mb-4" style={{ border: '1px solid rgba(124,58,237,0.3)', background: 'rgba(124,58,237,0.05)' }}>
+          <div style={{ color: '#a78cff', fontWeight: 700, fontSize: '0.9rem', marginBottom: '8px' }}>🛠️ Developer Tools</div>
+          <div style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.7)', marginBottom: '16px', lineHeight: 1.5 }}>
+            Populate your Supabase database with realistic demo data (Alerts, Employees, Policies, and Statistics).
+          </div>
+          <button 
+            onClick={handleSeed} 
+            className="btn btn-ghost" 
+            disabled={seeding}
+            style={{ width: '100%', borderColor: 'rgba(124,58,237,0.5)', color: '#a78cff' }}
+          >
+            {seeding ? '⏳ Seeding Database...' : '🚀 Seed Demo Data'}
+          </button>
         </div>
 
         <button onClick={handleSave} className="btn btn-primary" style={{ minWidth: '140px' }}>

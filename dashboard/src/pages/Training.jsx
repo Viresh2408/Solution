@@ -1,8 +1,42 @@
-import { useTrainingModules, useEmployees } from '../hooks/useTrustNetData';
+import { useState } from 'react';
+import { useTrainingModules, useEmployees, useSimulations } from '../hooks/useTrustNetData';
+import { launchSimulation, SIMULATION_TEMPLATES } from '../utils/simulationClient';
 
 export default function Training() {
   const { modules: trainingModules } = useTrainingModules();
   const { employees: employeeRisk } = useEmployees();
+  const { simulations: simulationHistory } = useSimulations();
+
+  const [showModal, setShowModal]     = useState(false);
+  const [selectedTpl, setSelectedTpl] = useState('payroll');
+  const [targetCount, setTargetCount] = useState(25);
+  const [fromEmail, setFromEmail]     = useState('security@yourcompany.com');
+  const [fromName, setFromName]       = useState('IT Security Team');
+  const [launching, setLaunching]     = useState(false);
+  const [launchResult, setLaunchResult] = useState(null);
+  const [launchError, setLaunchError]   = useState('');
+
+  const handleLaunch = async () => {
+    const tpl = SIMULATION_TEMPLATES.find(t => t.id === selectedTpl);
+    setLaunching(true);
+    setLaunchError('');
+    setLaunchResult(null);
+    try {
+      const result = await launchSimulation({
+        templateId: selectedTpl,
+        name: `${tpl.name} — ${new Date().toLocaleDateString('en-IN')}`,
+        targets: targetCount,
+        fromEmail,
+        fromName,
+      });
+      setLaunchResult(result);
+    } catch (err) {
+      setLaunchError(err.message);
+    } finally {
+      setLaunching(false);
+    }
+  };
+
   const totalEnrolled   = trainingModules.reduce((s, m) => s + (m.enrolled   || 0), 0);
   const totalCompleted  = trainingModules.reduce((s, m) => s + (m.completed  || 0), 0);
   const avgScore = trainingModules.length
@@ -111,31 +145,98 @@ export default function Training() {
         </div>
       </div>
 
-      {/* Leaderboard */}
-      <div className="card">
-        <div className="section-header mb-4">
-          <div className="section-title">Department Training Leaderboard</div>
-        </div>
-        <div style={{display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'10px'}}>
-          {[
-            {rank:1, dept:'Engineering', score:94, completed:'267/267', emoji:'🥇'},
-            {rank:2, dept:'Customer Svc', score:91, completed:'412/445', emoji:'🥈'},
-            {rank:3, dept:'IT', score:88, completed:'121/134', emoji:'🥉'},
-            {rank:4, dept:'Operations', score:81, completed:'256/312', emoji:'4️⃣'},
-            {rank:5, dept:'Marketing', score:75, completed:'134/178', emoji:'5️⃣'},
-            {rank:6, dept:'Finance', score:'61', completed:'88/145', emoji:'6️⃣'},
-          ].map(d => (
-            <div key={d.rank} style={{background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:'var(--r-md)', padding:'14px', display:'flex', alignItems:'center', gap:'10px'}}>
-              <span style={{fontSize:'1.3rem'}}>{d.emoji}</span>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600, fontSize:'0.85rem'}}>{d.dept}</div>
-                <div style={{fontSize:'0.72rem', color:'var(--text-2)'}}>{d.completed} completed</div>
+      {/* Leaderboard & Simulations */}
+      <div className="grid-2" style={{gap:'16px'}}>
+        <div className="card">
+          <div className="section-header mb-4">
+            <div className="section-title">Department Leaderboard</div>
+          </div>
+          <div style={{display:'flex', flexDirection:'column', gap:'8px'}}>
+            {[
+              {rank:1, dept:'Engineering', score:94, emoji:'🥇'},
+              {rank:2, dept:'Customer Svc', score:91, emoji:'🥈'},
+              {rank:3, dept:'IT', score:88, emoji:'🥉'},
+              {rank:4, dept:'Operations', score:81, emoji:'4️⃣'},
+              {rank:5, dept:'Finance', score:61, emoji:'⚠️'},
+            ].map(d => (
+              <div key={d.rank} style={{background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:'var(--r-md)', padding:'10px 14px', display:'flex', alignItems:'center', gap:'10px'}}>
+                <span style={{fontSize:'1.1rem'}}>{d.emoji}</span>
+                <div style={{flex:1, fontWeight:600, fontSize:'0.85rem'}}>{d.dept}</div>
+                <div style={{fontFamily:'var(--mono)', fontWeight:800, color: d.score >= 80 ? 'var(--safe)' : 'var(--warning)'}}>{d.score}%</div>
               </div>
-              <div style={{fontFamily:'var(--mono)', fontWeight:800, fontSize:'1rem', color: parseInt(d.score) >= 80 ? 'var(--safe)' : 'var(--warning)'}}>{d.score}%</div>
-            </div>
-          ))}
+            ))}
+          </div>
+        </div>
+
+        {/* Phishing Simulation */}
+        <div className="card">
+          <div className="section-header mb-4">
+            <div className="section-title">Active Simulations</div>
+            <button className="btn btn-primary btn-sm" onClick={() => { setShowModal(true); setLaunchResult(null); }}>🚀 Launch</button>
+          </div>
+          
+          <div style={{display:'flex', flexDirection:'column', gap:'10px'}}>
+            {simulationHistory.slice(0, 4).map(sim => (
+              <div key={sim.id} style={{background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:'var(--r-md)', padding:'12px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                <div>
+                  <div style={{fontWeight:700, fontSize:'0.85rem'}}>{sim.name}</div>
+                  <div style={{fontSize:'0.7rem', color:'var(--text-3)'}}>{sim.date} · {sim.targets} targets</div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontFamily:'var(--mono)', fontWeight:800, color: sim.failRate > 20 ? 'var(--danger)' : 'var(--safe)'}}>{sim.failRate}%</div>
+                  <div style={{fontSize:'0.65rem', color:'var(--text-3)'}}>fail rate</div>
+                </div>
+              </div>
+            ))}
+            {simulationHistory.length === 0 && (
+              <div style={{textAlign:'center', padding:'20px', color:'var(--text-3)', fontSize:'0.8rem'}}>No campaigns launched yet.</div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Modal Launcher */}
+      {showModal && (
+          <div style={{
+            position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:1000,
+            display:'flex', alignItems:'center', justifyContent:'center', padding:'20px',
+          }} onClick={e => e.target === e.currentTarget && setShowModal(false)}>
+            <div style={{
+              background:'var(--bg-card)', border:'1px solid var(--border)',
+              borderRadius:'var(--r-xl)', padding:'24px', width:'100%', maxWidth:'500px',
+            }}>
+              <div style={{fontWeight:800, fontSize:'1.1rem', marginBottom:'16px'}}>🎣 Launch Phishing Simulation</div>
+              
+              <div style={{display:'flex', flexDirection:'column', gap:'8px', marginBottom:'20px'}}>
+                {SIMULATION_TEMPLATES.map(tpl => (
+                  <div key={tpl.id} onClick={() => setSelectedTpl(tpl.id)} style={{
+                    border: `1px solid ${selectedTpl === tpl.id ? tpl.color : 'var(--border)'}`,
+                    background: selectedTpl === tpl.id ? `${tpl.color}12` : 'var(--bg-base)',
+                    borderRadius:'var(--r-md)', padding:'12px', cursor:'pointer'
+                  }}>
+                    <div style={{display:'flex', gap:'10px'}}>
+                      <span>{tpl.icon}</span>
+                      <div style={{fontWeight:700, fontSize:'0.85rem'}}>{tpl.name}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{marginBottom:'16px'}}>
+                <div style={{fontSize:'0.75rem', color:'var(--text-2)', marginBottom:'4px'}}>Target Count</div>
+                <input type="number" value={targetCount} onChange={e => setTargetCount(e.target.value)} style={{width:'100%', background:'var(--bg-base)', border:'1px solid var(--border)', borderRadius:'var(--r-sm)', padding:'8px', color:'#fff'}}/>
+              </div>
+
+              {launchResult && <div style={{color:'var(--safe)', fontSize:'0.8rem', marginBottom:'10px'}}>✓ Campaign Launched Successfully!</div>}
+              {launchError && <div style={{color:'var(--danger)', fontSize:'0.8rem', marginBottom:'10px'}}>⚠ {launchError}</div>}
+
+              <div style={{display:'flex', gap:'10px', justifyContent:'flex-end'}}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>Cancel</button>
+                <button className="btn btn-primary btn-sm" onClick={handleLaunch} disabled={launching}>{launching ? 'Launching...' : 'Start Simulation'}</button>
+              </div>
+            </div>
+          </div>
+      )}
 
     </div>
   );

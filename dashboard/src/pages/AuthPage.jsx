@@ -1,10 +1,12 @@
-// TrustNet AI — Auth Page (Landing + Sign In + Sign Up)
+// TrustNet AI — Auth Page (Landing + Firebase Sign In + Sign Up)
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 
 export default function AuthPage() {
-  const { loginWithGoogle, loginWithEmail, registerWithEmail, error } = useAuth();
-  const [mode, setMode]         = useState('landing'); // 'landing' | 'signin' | 'signup'
+  const { user, profile, loginWithGoogle, loginWithEmail, registerWithEmail, setupProfile, logout, error } = useAuth();
+  const [mode, setMode]         = useState('landing'); // 'landing' | 'signin' | 'signup' | 'setup'
+  const [role, setRole]         = useState('owner'); // 'owner' | 'worker'
+  const [orgId, setOrgId]       = useState('');
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [name, setName]         = useState('');
@@ -17,13 +19,97 @@ export default function AuthPage() {
     setSubmitting(true);
     try {
       if (mode === 'signin') await loginWithEmail(email, password);
-      else                   await registerWithEmail(email, password);
+      else                   await registerWithEmail(email, password, name);
     } catch (err) {
       setLocalErr(err.message);
     } finally {
       setSubmitting(false);
     }
   };
+
+  const handleSetup = async (e) => {
+    e.preventDefault();
+    if (!orgId) return setLocalErr('Please enter a Company ID');
+    setSubmitting(true);
+    try {
+      await setupProfile(user.uid, user.email, user.displayName || name, role, orgId.toLowerCase());
+    } catch (err) {
+      setLocalErr(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ─── PENDING APPROVAL ─────────────────────────────────────
+  if (user && profile?.status === 'pending') {
+    return (
+      <div style={{ minHeight:'100vh', background:'#060B14', display:'flex', alignItems:'center', justifyContent:'center', padding:'24px', textAlign:'center', fontFamily:'Inter' }}>
+        <div className="card" style={{ maxWidth:'440px', padding:'40px' }}>
+          <div style={{ fontSize:'3rem', marginBottom:'20px' }}>⏳</div>
+          <h2 style={{ fontWeight:800, color:'#fff', marginBottom:'12px' }}>Approval Pending</h2>
+          <p style={{ color:'rgba(255,255,255,0.6)', fontSize:'0.9rem', lineHeight:1.6, marginBottom:'24px' }}>
+            Your request to join <strong style={{color:'#00D9FF'}}>{profile.orgId}</strong> has been sent. 
+            An administrator must approve your account before you can access the dashboard.
+          </p>
+          <div style={{ background:'rgba(255,255,255,0.04)', padding:'12px', borderRadius:'8px', fontSize:'0.75rem', color:'rgba(255,255,255,0.4)', marginBottom:'24px' }}>
+            Contact your IT manager if this is taking too long.
+          </div>
+          <button onClick={logout} className="btn btn-ghost" style={{ width:'100%' }}>Sign Out</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── SETUP PROFILE ────────────────────────────────────────
+  if (user && !profile) {
+    return (
+      <div style={{ minHeight:'100vh', background:'#060B14', display:'flex', alignItems:'center', justifyContent:'center', padding:'24px', fontFamily:'Inter' }}>
+        <div style={{ width:'100%', maxWidth:'420px', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:'20px', padding:'36px' }}>
+          <h2 style={{ fontWeight:800, fontSize:'1.3rem', color:'#fff', textAlign:'center', marginBottom:'4px' }}>Finish Setup</h2>
+          <p style={{ fontSize:'0.82rem', color:'rgba(255,255,255,0.4)', textAlign:'center', marginBottom:'24px' }}>How will you be using TrustNet AI?</p>
+          
+          <form onSubmit={handleSetup}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'20px' }}>
+              <div 
+                onClick={() => setRole('owner')}
+                style={{ padding:'16px', borderRadius:'12px', border:`1px solid ${role==='owner' ? '#00D9FF' : 'rgba(255,255,255,0.1)'}`, background:role==='owner'?'rgba(0,217,255,0.05)':'transparent', cursor:'pointer', textAlign:'center', transition:'0.2s' }}
+              >
+                <div style={{ fontSize:'1.5rem', marginBottom:'4px' }}>🏢</div>
+                <div style={{ fontWeight:700, fontSize:'0.85rem', color:role==='owner'?'#00D9FF':'#fff' }}>Owner</div>
+              </div>
+              <div 
+                onClick={() => setRole('worker')}
+                style={{ padding:'16px', borderRadius:'12px', border:`1px solid ${role==='worker' ? '#00D9FF' : 'rgba(255,255,255,0.1)'}`, background:role==='worker'?'rgba(0,217,255,0.05)':'transparent', cursor:'pointer', textAlign:'center', transition:'0.2s' }}
+              >
+                <div style={{ fontSize:'1.5rem', marginBottom:'4px' }}>🛠️</div>
+                <div style={{ fontWeight:700, fontSize:'0.85rem', color:role==='worker'?'#00D9FF':'#fff' }}>Worker</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom:'20px' }}>
+              <label style={{ display:'block', fontSize:'0.75rem', color:'rgba(255,255,255,0.5)', marginBottom:'6px', fontWeight:600 }}>
+                {role === 'owner' ? 'CREATE COMPANY ID (e.g., google)' : 'ENTER COMPANY ID TO JOIN'}
+              </label>
+              <input 
+                value={orgId} onChange={e => setOrgId(e.target.value)} placeholder="company-slug" required
+                style={{ width:'100%', background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:'8px', padding:'12px', color:'#fff', outline:'none' }}
+              />
+              <p style={{ fontSize:'0.65rem', color:'rgba(255,255,255,0.3)', marginTop:'6px' }}>
+                {role === 'owner' ? 'This will be the ID your workers use to join.' : 'Ask your administrator for the company ID.'}
+              </p>
+            </div>
+
+            {localErr && <div style={{ color:'#FF4757', fontSize:'0.8rem', marginBottom:'12px' }}>⚠️ {localErr}</div>}
+
+            <button type="submit" disabled={submitting} className="btn btn-primary" style={{ width:'100%', padding:'12px' }}>
+              {submitting ? 'Setting up...' : 'Complete Setup →'}
+            </button>
+            <button type="button" onClick={logout} style={{ width:'100%', background:'none', border:'none', color:'rgba(255,255,255,0.4)', marginTop:'16px', fontSize:'0.8rem', cursor:'pointer' }}>Sign Out</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   // ─── LANDING PAGE ────────────────────────────────────────
   if (mode === 'landing') return (
@@ -138,23 +224,6 @@ export default function AuthPage() {
         </div>
       </section>
 
-      {/* ── STATS ── */}
-      <section style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid rgba(255,255,255,0.06)', borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '48px 24px' }}>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '64px', flexWrap: 'wrap' }}>
-          {[
-            { val: '5', label: 'Live Security APIs' },
-            { val: '70+', label: 'AV Engines (VirusTotal)' },
-            { val: '<2s', label: 'Threat Detection Time' },
-            { val: '99.9%', label: 'Uptime SLA' },
-          ].map(s => (
-            <div key={s.label} style={{ textAlign: 'center' }}>
-              <div style={{ fontFamily: 'monospace', fontSize: '2.4rem', fontWeight: 900, background: 'linear-gradient(135deg, #00D9FF, #7C3AED)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{s.val}</div>
-              <div style={{ fontSize: '0.82rem', color: 'rgba(255,255,255,0.45)', marginTop: '4px' }}>{s.label}</div>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* ── CTA ── */}
       <section style={{ textAlign: 'center', padding: '80px 24px' }}>
         <h2 style={{ fontSize: '2rem', fontWeight: 800, marginBottom: '16px' }}>
@@ -220,21 +289,25 @@ export default function AuthPage() {
           </div>
 
           {/* Google SSO */}
-          <button onClick={loginWithGoogle} style={{ width: '100%', background: '#fff', color: '#1a1a2e', border: 'none', borderRadius: '10px', padding: '11px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '20px', transition: 'opacity 0.2s' }}
-            onMouseEnter={e => e.target.style.opacity='0.9'} onMouseLeave={e => e.target.style.opacity='1'}>
-            <svg width="18" height="18" viewBox="0 0 48 48">
-              <path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.2 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34 6.6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 20-8 20-20 0-1.3-.2-2.7-.4-4z"/>
-              <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.8 19 12 24 12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34 6.6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
-              <path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.5 35.6 26.9 36 24 36c-5.3 0-9.6-2.8-11.3-7H6.3C9.7 39.7 16.4 44 24 44z"/>
-              <path fill="#1565C0" d="M43.6 20H24v8h11.3c-.8 2.3-2.3 4.2-4.3 5.6l6.2 5.2C41.4 34.9 44 29.9 44 24c0-1.3-.2-2.7-.4-4z"/>
+          <button onClick={loginWithGoogle} style={{
+            width: '100%', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', 
+            color: '#E8EAF0', padding: '12px', borderRadius: '10px', cursor: 'pointer', fontSize: '0.9rem', 
+            fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', 
+            marginBottom: '24px', transition: 'all 0.2s'
+          }} onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.1)'} onMouseLeave={e => e.currentTarget.style.background='rgba(255,255,255,0.06)'}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
             </svg>
             Continue with Google
           </button>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
-            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.08)' }}/>
-            <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.3)' }}>or with email</span>
-            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.08)' }}/>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '24px' }}>
+            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }}/>
+            <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.2)', fontWeight: 600 }}>OR EMAIL</span>
+            <div style={{ flex: 1, height: '1px', background: 'rgba(255,255,255,0.1)' }}/>
           </div>
 
           {/* Email Form */}

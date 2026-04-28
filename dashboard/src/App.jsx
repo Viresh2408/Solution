@@ -1,4 +1,4 @@
-// TrustNet AI — Complete App.jsx with Auth guard, Landing, and all pages
+// TrustNet AI — App.jsx with Firebase authentication
 import { useState } from 'react';
 import './index.css';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -12,12 +12,13 @@ import Policy      from './pages/Policy';
 import Training    from './pages/Training';
 import Alerts      from './pages/Alerts';
 import Settings    from './pages/Settings';
+import Team        from './pages/Team';
 
 // Components
 import Sidebar     from './components/Sidebar';
 import DashHeader  from './components/DashHeader';
 
-// ── Placeholder pages for Settings sub-sections ──────────────
+// ── Placeholder pages ─────────────────────────────────────────
 function ApiAccess() {
   return (
     <div className="page">
@@ -40,10 +41,10 @@ function ApiAccess() {
 
 function Compliance() {
   const reports = [
-    { name: 'Q1 2026 Security Report',  date: 'Apr 1, 2026',  type: 'PDF', size: '2.4 MB' },
-    { name: 'DPDPA Audit Checklist',    date: 'Mar 15, 2026', type: 'PDF', size: '1.1 MB' },
+    { name: 'Q1 2026 Security Report',  date: 'Apr 1, 2026',  type: 'PDF',  size: '2.4 MB' },
+    { name: 'DPDPA Audit Checklist',    date: 'Mar 15, 2026', type: 'PDF',  size: '1.1 MB' },
     { name: 'ISO 27001 Gap Analysis',   date: 'Feb 28, 2026', type: 'XLSX', size: '890 KB' },
-    { name: 'RBI Cybersecurity Report', date: 'Jan 31, 2026', type: 'PDF', size: '3.2 MB' },
+    { name: 'RBI Cybersecurity Report', date: 'Jan 31, 2026', type: 'PDF',  size: '3.2 MB' },
   ];
   return (
     <div className="page">
@@ -75,16 +76,20 @@ function Compliance() {
 function DashboardApp() {
   const [activePage, setActivePage] = useState('overview');
 
-  const pages = {
-    overview:   <Overview />,
-    analytics:  <Analytics />,
-    riskmap:    <RiskMap />,
-    policy:     <Policy />,
-    training:   <Training />,
-    alerts:     <Alerts />,
-    settings:   <Settings />,
-    api:        <ApiAccess />,
-    compliance: <Compliance />,
+  const renderPage = () => {
+    switch (activePage) {
+      case 'overview':   return <Overview />;
+      case 'analytics':  return <Analytics />;
+      case 'riskmap':    return <RiskMap />;
+      case 'policy':     return <Policy />;
+      case 'training':   return <Training />;
+      case 'alerts':     return <Alerts />;
+      case 'settings':   return <Settings />;
+      case 'team':       return <Team />;
+      case 'api':        return <ApiAccess />;
+      case 'compliance': return <Compliance />;
+      default:           return <Overview />;
+    }
   };
 
   return (
@@ -92,7 +97,9 @@ function DashboardApp() {
       <Sidebar activePage={activePage} setActivePage={setActivePage} />
       <div className="main-content">
         <DashHeader activePage={activePage} setActivePage={setActivePage} />
-        {pages[activePage] || <Overview />}
+        <div className="page-content">
+          {renderPage()}
+        </div>
       </div>
     </div>
   );
@@ -100,7 +107,7 @@ function DashboardApp() {
 
 // ── Auth guard ────────────────────────────────────────────────
 function AppRouter() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
 
   if (loading) {
     return (
@@ -115,7 +122,14 @@ function AppRouter() {
     );
   }
 
-  return user ? <DashboardApp /> : <AuthPage />;
+  // Only show dashboard if user exists AND is approved
+  const isApproved = user && profile && profile.status === 'approved';
+  
+  if (user && isApproved) {
+    return <DashboardApp />;
+  }
+
+  return <AuthPage />;
 }
 
 // ── Root export ───────────────────────────────────────────────

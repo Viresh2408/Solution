@@ -1,64 +1,120 @@
-// TrustNet AI — Auth Context (Google Sign-In + Email/Password)
+// TrustNet AI — Auth Context (Firebase)
 import { createContext, useContext, useState, useEffect } from 'react';
-import {
-  signInWithPopup, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, onAuthStateChanged,
+import { 
+  signInWithPopup, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  onAuthStateChanged, 
+  signOut,
+  updateProfile
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
+import { supabase } from '../supabase';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, u => {
-      setUser(u);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        // Fetch extended profile from Supabase
+        const { data: prof, error: profErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', currentUser.uid)
+          .single();
+        
+        if (prof) setProfile(prof);
+        else setProfile(null); // Not set up yet
+        
+        setUser(currentUser);
+      } else {
+        setUser(null);
+        setProfile(null);
+      }
       setLoading(false);
     });
-    return unsub;
+    return () => unsubscribe();
   }, []);
 
   const loginWithGoogle = async () => {
     setError('');
-    try { await signInWithPopup(auth, googleProvider); }
-    catch (e) { setError(e.message); }
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
   const loginWithEmail = async (email, password) => {
     setError('');
-    try { await signInWithEmailAndPassword(auth, email, password); }
-    catch (e) { setError(friendlyError(e.code)); throw e; }
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (e) {
+      setError(e.message);
+      throw e;
+    }
   };
 
-  const registerWithEmail = async (email, password) => {
+  const registerWithEmail = async (email, password, displayName) => {
     setError('');
-    try { await createUserWithEmailAndPassword(auth, email, password); }
-    catch (e) { setError(friendlyError(e.code)); throw e; }
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      if (displayName) {
+        await updateProfile(userCredential.user, { displayName });
+      }
+      return userCredential.user;
+    } catch (e) {
+      setError(e.message);
+      throw e;
+    }
+  };
+
+  // Create or Join Company
+  const setupProfile = async (uid, email, displayName, role, orgId) => {
+    // 1. Ensure organization exists in database to prevent FK constraint error
+    if (role === 'owner') {
+      await supabase.from('organizations').upsert({
+        id: orgId,
+        name: orgId.includes('-') ? orgId.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ') : `${orgId.toUpperCase()} Corp`,
+        riskScore: 68,
+        totalEmployees: 1,
+        complianceScore: 92
+      });
+    }
+
+    // 2. Create the profile
+    const status = role === 'owner' ? 'approved' : 'pending';
+    const { data, error } = await supabase.from('profiles').upsert({
+      id: uid,
+      email,
+      displayName,
+      role,
+      orgId,
+      status,
+      createdAt: new Date().toISOString()
+    }).select().single();
+
+    if (error) throw error;
+    setProfile(data);
+    return data;
   };
 
   const logout = () => signOut(auth);
 
   return (
-    <AuthContext.Provider value={{ user, loading, error, loginWithGoogle, loginWithEmail, registerWithEmail, logout }}>
+    <AuthContext.Provider value={{ 
+      user, profile, loading, error, 
+      loginWithGoogle, loginWithEmail, registerWithEmail, setupProfile, logout 
+    }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
 export const useAuth = () => useContext(AuthContext);
-
-function friendlyError(code) {
-  const map = {
-    'auth/user-not-found':      'No account found with this email.',
-    'auth/wrong-password':      'Incorrect password.',
-    'auth/email-already-in-use':'An account with this email already exists.',
-    'auth/invalid-email':       'Please enter a valid email address.',
-    'auth/weak-password':       'Password must be at least 6 characters.',
-    'auth/too-many-requests':   'Too many attempts. Try again later.',
-    'auth/popup-closed-by-user':'Sign-in popup was closed.',
-  };
-  return map[code] || 'Authentication failed. Please try again.';
-}

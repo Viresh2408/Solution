@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
 import {
-  useOrgOverview, useAlerts, useDailyStats, useAttackDistribution
+  useOrgOverview, useAlerts, useDailyStats, useAttackDistribution, usePolicies, useSimulations, useEmployees
 } from '../hooks/useTrustNetData';
 
 
@@ -58,10 +58,21 @@ function RiskGauge({ score, size = 120 }) {
 
 export default function Overview() {
   const { org } = useOrgOverview();
-  const { alerts } = useAlerts(5);
+  const { alerts, loading: alertsLoading } = useAlerts(100);
   const { stats } = useDailyStats(14);
+  const { policies } = usePolicies();
+  const { simulations } = useSimulations();
+  const { employees } = useEmployees();
   const attackDistribution = useAttackDistribution();
+  
   const [animateScore, setAnimateScore] = useState(0);
+
+  // Derive dynamic stats
+  const activeAlerts = alerts.filter(a => a.status !== 'resolved').length;
+  const blockedToday = alerts.filter(a => a.blocked && new Date(a.timestamp).toDateString() === new Date().toDateString()).length;
+  const activePolicies = policies.filter(p => p.enabled).length;
+  const ongoingSims = simulations.filter(s => s.status === 'active' || s.status === 'sending').length;
+  const vulnerableCount = employees.filter(e => e.riskScore > 70).length;
 
   // Sandbox State
   const [scanUrl, setScanUrl] = useState('');
@@ -125,35 +136,35 @@ export default function Overview() {
       <div className="stat-cards-grid mb-6">
         <div className="stat-card danger">
           <div className="stat-icon danger">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
           </div>
-          <span className="stat-value" style={{color:'var(--danger)'}}>{o.riskScore}</span>
+          <span className="stat-value" style={{color:'var(--danger)'}}>{animateScore}</span>
           <span className="stat-label">Org Risk Score</span>
           <div className="stat-delta up">↑ +4 this week</div>
         </div>
         <div className="stat-card warning">
           <div className="stat-icon warning">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/></svg>
           </div>
-          <span className="stat-value" style={{color:'var(--warning)'}}>{o.activeAlerts}</span>
-          <span className="stat-label">Active Alerts</span>
-          <div className="stat-delta up">↑ +23 vs yesterday</div>
+          <span className="stat-value" style={{color:'var(--warning)'}}>{activeAlerts}</span>
+          <span className="stat-label">Unresolved Alerts</span>
+          <div className="stat-delta up">↑ {activeAlerts > 0 ? '+ Live' : 'Stable'}</div>
         </div>
         <div className="stat-card safe">
           <div className="stat-icon safe">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
-          <span className="stat-value" style={{color:'var(--safe)'}}>{o.threatsBlockedToday}</span>
-          <span className="stat-label">Threats Blocked Today</span>
-          <div className="stat-delta down">↓ -3 vs yesterday</div>
+          <span className="stat-value" style={{color:'var(--safe)'}}>{activePolicies}</span>
+          <span className="stat-label">Active Policies</span>
+          <div className="stat-delta safe">🛡️ Real-time Guard</div>
         </div>
         <div className="stat-card cyan">
           <div className="stat-icon cyan">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           </div>
-          <span className="stat-value" style={{color:'var(--cyan)'}}>{typeof o.totalEmployees === 'number' ? o.totalEmployees.toLocaleString() : o.totalEmployees}</span>
-          <span className="stat-label">Protected Employees</span>
-          <div className="stat-delta down">↑ {o.improvementRate} improvement</div>
+          <span className="stat-value" style={{color:'var(--cyan)'}}>{ongoingSims}</span>
+          <span className="stat-label">Active Simulations</span>
+          <div className="stat-delta down">📡 Training Live</div>
         </div>
       </div>
 
@@ -200,15 +211,15 @@ export default function Overview() {
           <RiskGauge score={animateScore} size={160}/>
           <div style={{fontSize:'1rem', fontWeight:700, color:scoreColor}}>{scoreLabel}</div>
           <div style={{fontSize:'0.78rem', color:'var(--text-2)', lineHeight:1.5}}>
-            {o.vulnerableUsers} of {o.totalEmployees} employees at elevated risk
+            {vulnerableCount} of {employees.length} employees at elevated risk
           </div>
           <div style={{width:'100%', marginTop:'8px'}}>
             <div style={{display:'flex', justifyContent:'space-between', fontSize:'0.75rem', color:'var(--text-2)', marginBottom:'4px'}}>
               <span>Compliance Score</span>
-              <span style={{color:'var(--safe)', fontFamily:'var(--mono)'}}>{o.complianceScore}%</span>
+              <span style={{color:'var(--safe)', fontFamily:'var(--mono)'}}>{o.complianceScore || 92}%</span>
             </div>
             <div className="progress-bar">
-              <div className="progress-fill" style={{width:`${o.complianceScore}%`, background:'var(--safe)'}}></div>
+              <div className="progress-fill" style={{width:`${o.complianceScore || 92}%`, background:'var(--safe)'}}></div>
             </div>
           </div>
         </div>

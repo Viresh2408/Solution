@@ -1,29 +1,33 @@
-// TrustNet AI — Real-time Firestore Data Hooks
-// Replaces all mockData.js imports across the dashboard
-
 import { useState, useEffect } from 'react';
-import {
-  collection, doc, onSnapshot, query,
-  orderBy, limit, updateDoc, serverTimestamp,
-  addDoc, getDocs, setDoc,
-} from 'firebase/firestore';
-import { db, ORG_ID } from '../firebase';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../supabase';
+
+const DEFAULT_ORG = 'apex-financial';
 
 // ─────────────────────────────────────────────
 // 1. ORG OVERVIEW (live — updates in real-time)
 // ─────────────────────────────────────────────
 export function useOrgOverview() {
+  const { profile } = useAuth();
+  const orgId = profile?.orgId || DEFAULT_ORG;
   const [org, setOrg] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'organizations', ORG_ID), snap => {
-      if (snap.exists()) {
-        setOrg({ id: snap.id, ...snap.data() });
-      }
+    const fetch = async () => {
+      const { data } = await supabase.from('organizations').select('*').eq('id', orgId).single();
+      setOrg(data);
       setLoading(false);
-    });
-    return unsub;
+    };
+    fetch();
+
+    const channel = supabase.channel(`org-${Math.random()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'organizations', filter: `id=eq.${orgId}` }, fetch)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   return { org, loading };
@@ -33,58 +37,80 @@ export function useOrgOverview() {
 // 2. REAL-TIME ALERTS FEED
 // ─────────────────────────────────────────────
 export function useAlerts(limitCount = 50) {
+  const { profile } = useAuth();
+  const orgId = profile?.orgId || DEFAULT_ORG;
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(
-      collection(db, `organizations/${ORG_ID}/alerts`),
-      orderBy('timestamp', 'desc'),
-      limit(limitCount)
-    );
-    const unsub = onSnapshot(q, snap => {
-      setAlerts(snap.docs.map(d => ({
-        id: d.id,
-        ...d.data(),
-        // Convert Firestore timestamp to relative time string
-        time: d.data().timestamp
-          ? getRelativeTime(d.data().timestamp.toDate?.() || new Date(d.data().timestamp))
-          : 'just now',
+    const fetch = async () => {
+      const { data } = await supabase
+        .from('alerts')
+        .select('*')
+        .eq('orgId', orgId)
+        .order('timestamp', { ascending: false })
+        .limit(limitCount);
+      
+      setAlerts((data || []).map(d => ({
+        ...d,
+        time: d.timestamp ? getRelativeTime(new Date(d.timestamp)) : 'just now'
       })));
       setLoading(false);
-    });
-    return unsub;
+    };
+    fetch();
+
+    const channel = supabase.channel(`alerts-${Math.random()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts', filter: `orgId=eq.${orgId}` }, fetch)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [limitCount]);
 
   return { alerts, loading };
 }
 
-// Resolve an alert (write back to Firestore)
+// Resolve an alert (write back to Supabase)
 export async function resolveAlert(alertId, userEmail = 'admin') {
-  await updateDoc(doc(db, `organizations/${ORG_ID}/alerts`, alertId), {
-    resolvedBy: userEmail,
-    resolvedAt: serverTimestamp(),
-    status: 'resolved',
-  });
+  await supabase
+    .from('alerts')
+    .update({
+      resolvedBy: userEmail,
+      resolvedAt: new Date().toISOString(),
+      status: 'resolved',
+    })
+    .eq('id', alertId);
 }
 
 // ─────────────────────────────────────────────
 // 3. EMPLOYEES (real-time, sorted by risk score)
 // ─────────────────────────────────────────────
 export function useEmployees() {
+  const { profile } = useAuth();
+  const orgId = profile?.orgId || DEFAULT_ORG;
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(
-      collection(db, `organizations/${ORG_ID}/employees`),
-      orderBy('riskScore', 'desc')
-    );
-    const unsub = onSnapshot(q, snap => {
-      setEmployees(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const fetch = async () => {
+      const { data } = await supabase
+        .from('employees')
+        .select('*')
+        .eq('orgId', orgId)
+        .order('riskScore', { ascending: false });
+      setEmployees(data || []);
       setLoading(false);
-    });
-    return unsub;
+    };
+    fetch();
+
+    const channel = supabase.channel(`employees-${Math.random()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employees', filter: `orgId=eq.${orgId}` }, fetch)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   return { employees, loading };
@@ -122,21 +148,31 @@ export function useDepartments() {
 // 5. DAILY STATS (time-series for charts)
 // ─────────────────────────────────────────────
 export function useDailyStats(days = 30) {
+  const { profile } = useAuth();
+  const orgId = profile?.orgId || DEFAULT_ORG;
   const [stats, setStats] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(
-      collection(db, `organizations/${ORG_ID}/dailyStats`),
-      orderBy('date', 'desc'),
-      limit(days)
-    );
-    const unsub = onSnapshot(q, snap => {
-      // Reverse so oldest → newest for charts
-      setStats(snap.docs.map(d => d.data()).reverse());
+    const fetch = async () => {
+      const { data } = await supabase
+        .from('dailyStats')
+        .select('*')
+        .eq('orgId', orgId)
+        .order('date', { ascending: false })
+        .limit(days);
+      setStats((data || []).reverse()); // Reverse so oldest → newest for charts
       setLoading(false);
-    });
-    return unsub;
+    };
+    fetch();
+
+    const channel = supabase.channel(`stats-${Math.random()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'dailyStats', filter: `orgId=eq.${orgId}` }, fetch)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [days]);
 
   return { stats, loading };
@@ -146,61 +182,81 @@ export function useDailyStats(days = 30) {
 // 6. POLICY RULES (real-time, writeable)
 // ─────────────────────────────────────────────
 export function usePolicies() {
+  const { profile } = useAuth();
+  const orgId = profile?.orgId || DEFAULT_ORG;
   const [policies, setPolicies] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, `organizations/${ORG_ID}/policies`),
-      snap => {
-        setPolicies(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      }
-    );
-    return unsub;
+    const fetch = async () => {
+      const { data } = await supabase.from('policies').select('*').eq('orgId', orgId);
+      setPolicies(data || []);
+      setLoading(false);
+    };
+    fetch();
+
+    const channel = supabase.channel('policies-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'policies', filter: `orgId=eq.${orgId}` }, fetch)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   return { policies, loading };
 }
 
 export async function togglePolicy(policyId, currentEnabled) {
-  await updateDoc(doc(db, `organizations/${ORG_ID}/policies`, policyId), {
-    enabled: !currentEnabled,
-    updatedAt: serverTimestamp(),
-  });
+  await supabase
+    .from('policies')
+    .update({
+      enabled: !currentEnabled,
+      updatedAt: new Date().toISOString(),
+    })
+    .eq('id', policyId);
 }
 
 // ─────────────────────────────────────────────
 // 7. PHISHING SIMULATIONS
 // ─────────────────────────────────────────────
 export function useSimulations() {
+  const { profile } = useAuth();
+  const orgId = profile?.orgId || DEFAULT_ORG;
   const [simulations, setSimulations] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(
-      collection(db, `organizations/${ORG_ID}/simulations`),
-      orderBy('createdAt', 'desc')
-    );
-    const unsub = onSnapshot(q, snap => {
-      setSimulations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const fetch = async () => {
+      const { data } = await supabase
+        .from('simulations')
+        .select('*')
+        .eq('orgId', orgId)
+        .order('createdAt', { ascending: false });
+      setSimulations(data || []);
       setLoading(false);
-    });
-    return unsub;
+    };
+    fetch();
+
+    const channel = supabase.channel('simulations-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'simulations', filter: `orgId=eq.${orgId}` }, fetch)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   return { simulations, loading };
 }
 
-export async function createSimulation(name, targets) {
-  await addDoc(collection(db, `organizations/${ORG_ID}/simulations`), {
+export async function createSimulation(name, targets, overrideOrgId = null) {
+  const orgId = overrideOrgId || DEFAULT_ORG;
+  await supabase.from('simulations').insert({
+    orgId: orgId,
     name,
     targets,
     clicked: 0,
     reported: 0,
     failRate: 0,
     status: 'active',
-    createdAt: serverTimestamp(),
+    createdAt: new Date().toISOString(),
   });
 }
 
@@ -208,19 +264,25 @@ export async function createSimulation(name, targets) {
 // 8. TRAINING MODULES
 // ─────────────────────────────────────────────
 export function useTrainingModules() {
+  const { profile } = useAuth();
+  const orgId = profile?.orgId || DEFAULT_ORG;
   const [modules, setModules] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, `organizations/${ORG_ID}/trainingModules`),
-      snap => {
-        setModules(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      }
-    );
-    return unsub;
-  }, []);
+    const fetch = async () => {
+      const { data } = await supabase.from('trainingModules').select('*').eq('orgId', orgId);
+      setModules(data || []);
+      setLoading(false);
+    };
+    fetch();
+
+    const channel = supabase.channel('modules-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trainingModules', filter: `orgId=eq.${orgId}` }, fetch)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [orgId]);
 
   return { modules, loading };
 }
@@ -257,6 +319,33 @@ const TYPE_COLORS = {
 };
 
 // ─────────────────────────────────────────────
+// 10. GLOBAL THREATS (real-time for RiskMap)
+// ─────────────────────────────────────────────
+export function useGlobalThreats() {
+  const { profile } = useAuth();
+  const orgId = profile?.orgId || DEFAULT_ORG;
+  const [threats, setThreats] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetch = async () => {
+      const { data } = await supabase.from('globalThreats').select('*').eq('orgId', orgId);
+      setThreats(data || []);
+      setLoading(false);
+    };
+    fetch();
+
+    const channel = supabase.channel('threats-channel')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'globalThreats', filter: `orgId=eq.${orgId}` }, fetch)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, [orgId]);
+
+  return { threats, loading };
+}
+
+// ─────────────────────────────────────────────
 // UTILITY — Relative time string
 // ─────────────────────────────────────────────
 function getRelativeTime(date) {
@@ -270,3 +359,73 @@ function getRelativeTime(date) {
   if (hours < 24) return `${hours}h ago`;
   return `${days}d ago`;
 }
+
+/**
+ * SEED DATABASE WITH DEMO DATA
+ */
+export const seedDatabase = async (overrideOrgId = null) => {
+  const orgId = overrideOrgId || DEFAULT_ORG;
+  console.log(`[TrustNet] Seeding database for ${orgId}...`);
+
+  // 1. Seed Organization
+  await supabase.from('organizations').upsert({
+    id: orgId,
+    name: orgId === DEFAULT_ORG ? 'Apex Financial Services' : `${orgId.toUpperCase()} Corp`,
+    riskScore: 68,
+    activeAlerts: 42,
+    threatsBlockedToday: 128,
+    totalEmployees: 2148,
+    improvementRate: '12%',
+    vulnerableUsers: 84,
+    complianceScore: 92,
+  });
+
+  // 2. Seed Employees
+  const { data: existingEmps } = await supabase.from('employees').select('id').limit(1);
+  if (!existingEmps?.length) {
+    const emps = [
+      { name: 'Aditi Rao', dept: 'Finance', riskScore: 82, role: 'Accounts Manager', orgId: orgId },
+      { name: 'Rahul Mehta', dept: 'Engineering', riskScore: 45, role: 'Senior Developer', orgId: orgId },
+      { name: 'Sneha Gupta', dept: 'HR', riskScore: 67, role: 'HR Lead', orgId: orgId },
+      { name: 'Vikram Singh', dept: 'Finance', riskScore: 91, role: 'CFO', orgId: orgId },
+      { name: 'Priya Sharma', dept: 'Marketing', riskScore: 32, role: 'Designer', orgId: orgId },
+    ];
+    await supabase.from('employees').insert(emps);
+  }
+
+  // 3. Seed Policies
+  const { data: existingPolicies } = await supabase.from('policies').select('id').eq('orgId', orgId).limit(1);
+  if (!existingPolicies?.length) {
+    const rules = [
+      { name: 'Deepfake Audio Detection', desc: 'Identify synthetic voice patterns in real-time communication', category: 'Incident Response', enabled: true, triggeredCount: 14, orgId: orgId },
+      { name: 'Block High-Risk Geographies', desc: 'Deny access from high-risk regions (VPN required)', category: 'Access Control', enabled: true, triggeredCount: 842, orgId: orgId },
+      { name: 'MFA on Large Wire Transfers', desc: 'Require biometric MFA for transfers > $10k', category: 'Finance', enabled: false, triggeredCount: 3, orgId: orgId },
+      { name: 'Browser Extension Enforcement', desc: 'Ensure TrustNet extension is active for all browser sessions', category: 'Browser', enabled: true, triggeredCount: 0, orgId: orgId },
+    ];
+    await supabase.from('policies').insert(rules);
+  }
+
+  // 4. Seed Alerts
+  const { data: existingAlerts } = await supabase.from('alerts').select('id').eq('orgId', orgId).limit(1);
+  if (!existingAlerts?.length) {
+    const alerts = [
+      { type: 'Phishing', severity: 'critical', detail: 'Suspicious login attempt from unauthorized IP', user: 'Vikram Singh', dept: 'Finance', blocked: true, status: 'active', timestamp: new Date().toISOString(), orgId: orgId },
+      { type: 'BEC', severity: 'high', detail: 'External email impersonating CEO detected', user: 'Aditi Rao', dept: 'Finance', blocked: false, status: 'active', timestamp: new Date().toISOString(), orgId: orgId },
+      { type: 'Malware', severity: 'medium', detail: 'Untrusted browser extension detected', user: 'Rahul Mehta', dept: 'Engineering', blocked: true, status: 'active', timestamp: new Date().toISOString(), orgId: orgId },
+    ];
+    await supabase.from('alerts').insert(alerts);
+  }
+
+  // 5. Seed Training Modules
+  const { data: existingModules } = await supabase.from('trainingModules').select('id').eq('orgId', orgId).limit(1);
+  if (!existingModules?.length) {
+    const modules = [
+      { title: 'Phishing Recognition', category: 'Email Security', difficulty: 'Beginner', enrolled: 1248, completed: 982, avgScore: 84, icon: '📧', color: '#FFA502', duration: '15m', orgId: orgId },
+      { title: 'Deepfake & Voice Phishing', category: 'AI Security', difficulty: 'Intermediate', enrolled: 842, completed: 421, avgScore: 76, icon: '🎭', color: '#FF4757', duration: '20m', orgId: orgId },
+      { title: 'Social Engineering 101', category: 'Human Risk', difficulty: 'Beginner', enrolled: 2148, completed: 2100, avgScore: 92, icon: '🧠', color: '#2ED573', duration: '10m', orgId: orgId },
+    ];
+    await supabase.from('trainingModules').insert(modules);
+  }
+
+  console.log('[TrustNet] Seeding complete.');
+};

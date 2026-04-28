@@ -1,4 +1,4 @@
-// TrustNet AI — Dashboard Header with working Search + User menu
+// TrustNet AI — Dashboard Header (Firebase auth)
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useAlerts, useEmployees } from '../hooks/useTrustNetData';
@@ -60,7 +60,7 @@ export default function DashHeader({ activePage, setActivePage }) {
 
   const displayName = user?.displayName || user?.email?.split('@')[0] || 'CISO';
   const initials    = displayName.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase();
-  const avatarColor = user?.photoURL ? null : '#7C3AED';
+  const avatarUrl   = user?.photoURL || null;
 
   return (
     <header className="dash-header">
@@ -139,9 +139,9 @@ export default function DashHeader({ activePage, setActivePage }) {
         <div style={{ position: 'relative' }}>
           <button onClick={() => setShowUserMenu(v => !v)}
             style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '5px 12px', cursor: 'pointer' }}>
-            {user?.photoURL
-              ? <img src={user.photoURL} style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} alt={displayName}/>
-              : <div className="user-avatar" style={{ background: avatarColor }}>{initials}</div>
+            {avatarUrl
+              ? <img src={avatarUrl} style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} alt={displayName}/>
+              : <div className="user-avatar" style={{ background: '#7C3AED' }}>{initials}</div>
             }
             <div style={{ textAlign: 'left' }}>
               <div style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text)' }}>{displayName.split(' ')[0]}</div>

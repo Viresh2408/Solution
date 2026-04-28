@@ -77,8 +77,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'ANALYZE_PAGE_CONTENT':
       analyzePageContentWithGemini(message.text, message.url).then(sendResponse);
       return true;
+
+    case 'REPORT_ACTIVITY':
+      reportActivityToSupabase(message.activity).then(sendResponse);
+      return true;
   }
 });
+
+/**
+ * Reports risky activity to Supabase alerts table
+ */
+async function reportActivityToSupabase(activity) {
+  const { vulnerabilityScore } = await chrome.storage.local.get(['vulnerabilityScore']);
+  const profile = await chrome.storage.local.get(['profile']);
+  
+  const orgId = profile?.profile?.orgId || 'apex-financial';
+  const email = profile?.profile?.email || 'worker@trustnet.ai';
+  const name  = profile?.profile?.displayName || 'TrustNet Worker';
+
+  const alertData = {
+    orgId: orgId,
+    type: activity.type === 'RISKY_SEARCH' ? 'Policy Violation' : 'Fraud Attempt',
+    severity: activity.severity || 'high',
+    detail: activity.detail,
+    user: name,
+    dept: 'Operations', // Default
+    blocked: true,
+    status: 'active',
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    const res = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/alerts`, {
+      method: 'POST',
+      headers: {
+        'apikey': CONFIG.SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(alertData)
+    });
+
+    if (res.ok) {
+      console.log('[TrustNet] Activity reported to owner successfully.');
+      
+      // Also update the local vulnerability score
+      const newScore = Math.min(100, (vulnerabilityScore || 50) + (activity.severity === 'critical' ? 15 : 5));
+      await chrome.storage.local.set({ vulnerabilityScore: newScore });
+      
+      // Update employee risk score in DB
+      await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/employees?name=eq.${encodeURIComponent(name)}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': CONFIG.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ riskScore: newScore })
+      });
+    }
+  } catch (err) {
+    console.error('[TrustNet] Failed to report activity:', err);
+  }
+}
 
 // ---- TAB EVENTS ----
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {

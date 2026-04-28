@@ -174,8 +174,43 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ============================================================
   // SETTINGS
   // ============================================================
+  $('saveApiKey')?.addEventListener('click', async () => {
+    const key = $('apiKeyInput').value.trim();
+    await chrome.storage.local.set({ apiKey: key });
+    // Send to background
+    await chrome.runtime.sendMessage({ type: 'UPDATE_API_KEY', key });
+    $('saveApiKey').textContent = '✓ Saved!';
+    setTimeout(() => { $('saveApiKey').textContent = 'Save'; }, 2000);
+  });
+
+  // ---- Sync Profile ----
+  $('syncAccountBtn')?.addEventListener('click', async () => {
+    const orgId = $('orgIdInput').value.trim();
+    const email = $('workerEmailInput').value.trim();
+    
+    if (!orgId || !email) {
+      alert('Please enter both Company ID and Worker Email.');
+      return;
+    }
+
+    await chrome.storage.local.set({ 
+      profile: { 
+        orgId, 
+        email, 
+        displayName: email.split('@')[0] 
+      } 
+    });
+
+    $('syncAccountBtn').textContent = '✓ Synchronized!';
+    $('syncAccountBtn').style.background = '#2ED573';
+    setTimeout(() => { 
+      $('syncAccountBtn').textContent = 'Sync Profile'; 
+      $('syncAccountBtn').style.background = '';
+    }, 2000);
+  });
+
   async function loadSettings() {
-    const data = await chrome.storage.local.get(['settings', 'apiKey']);
+    const data = await chrome.storage.local.get(['settings', 'apiKey', 'profile']);
     const s = data.settings || {};
 
     $('toggleOverlays').checked = s.enableWarningOverlays !== false;
@@ -185,6 +220,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('togglePrivacy').checked = s.privacyMode === true;
 
     if (data.apiKey) $('apiKeyInput').value = data.apiKey;
+    if (data.profile) {
+      $('orgIdInput').value = data.profile.orgId || '';
+      $('workerEmailInput').value = data.profile.email || '';
+    }
   }
 
   // Auto-save toggle settings
@@ -203,14 +242,5 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
   }
-
-  $('saveApiKey')?.addEventListener('click', async () => {
-    const key = $('apiKeyInput').value.trim();
-    await chrome.storage.local.set({ apiKey: key });
-    // Send to background
-    await chrome.runtime.sendMessage({ type: 'UPDATE_API_KEY', key });
-    $('saveApiKey').textContent = '✓ Saved!';
-    setTimeout(() => { $('saveApiKey').textContent = 'Save'; }, 2000);
-  });
 
 });

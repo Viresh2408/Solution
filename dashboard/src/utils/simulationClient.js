@@ -1,12 +1,10 @@
 // TrustNet AI — Phishing Simulation Client
-// Calls the Firebase Cloud Function which securely proxies SendGrid
+// Calls the Supabase Edge Function which securely proxies SendGrid
 // Key never leaves the server — this file has NO sensitive credentials.
 
-import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app, db, ORG_ID } from '../firebase';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { supabase } from '../supabase';
 
-const functions = getFunctions(app, 'us-central1');
+const ORG_ID = 'apex-financial';
 
 export const SIMULATION_TEMPLATES = [
   {
@@ -43,7 +41,7 @@ export const SIMULATION_TEMPLATES = [
 
 /**
  * Launch a phishing simulation campaign
- * Creates a Firestore record, then calls the Cloud Function to send emails
+ * Creates a database record, then calls the Edge Function to send emails
  *
  * @param {Object} opts
  * @param {string} opts.templateId - 'payroll' | 'itReset' | 'ceoFraud'
@@ -54,45 +52,54 @@ export const SIMULATION_TEMPLATES = [
  * @returns {Promise<{ simulationId, sent, failed }>}
  */
 export async function launchSimulation({ templateId, name, targets, fromEmail, fromName }) {
-  // 1. Create simulation record in Firestore first
-  const simRef = await addDoc(collection(db, `organizations/${ORG_ID}/simulations`), {
-    name,
-    templateId,
-    targets: Array.isArray(targets) ? targets.length : targets,
-    clicked:  0,
-    reported: 0,
-    failRate: 0,
-    status:   'sending',
-    createdAt: serverTimestamp(),
-  });
+  // 1. Create simulation record in Supabase first
+  const { data: simData, error: insertErr } = await supabase
+    .from('simulations')
+    .insert({
+      orgId: ORG_ID,
+      name,
+      targets: Array.isArray(targets) ? targets.length : targets,
+      clicked:  0,
+      reported: 0,
+      failRate: 0,
+      status:   'sending',
+      createdAt: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
 
-  const simulationId = simRef.id;
+  if (insertErr) throw insertErr;
+  
+  const simulationId = simData.id;
 
   // 2. Resolve targets list
   const targetList = Array.isArray(targets)
     ? targets
     : generateMockTargets(targets); // fallback for demo
 
-  // 3. Call the Firebase Cloud Function
+  // 3. Call the Supabase Edge Function
   try {
-    const sendFn = httpsCallable(functions, 'sendSimulationEmail');
-    const result = await sendFn({
-      simulationId,
-      templateId,
-      targets:     targetList,
-      orgId:       ORG_ID,
-      fromEmail,
-      fromName,
-      companyName: 'Apex Financial Services',
+    const { data: result, error: fnErr } = await supabase.functions.invoke('sendSimulationEmail', {
+      body: {
+        simulationId,
+        templateId,
+        targets:     targetList,
+        orgId:       ORG_ID,
+        fromEmail,
+        fromName,
+        companyName: 'Apex Financial Services',
+      }
     });
 
-    console.log('[TrustNet] Simulation launched:', result.data);
-    return { simulationId, ...result.data };
+    if (fnErr) throw fnErr;
+
+    console.log('[TrustNet] Simulation launched:', result);
+    return { simulationId, ...result };
   } catch (err) {
     console.error('[TrustNet] Simulation failed:', err.message);
 
-    // Mark as failed in Firestore
-    await simRef.update({ status: 'failed', error: err.message });
+    // Mark as failed in Supabase
+    await supabase.from('simulations').update({ status: 'failed' }).eq('id', simulationId);
     throw err;
   }
 }

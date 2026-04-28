@@ -8,6 +8,9 @@
 .env.*.local
 .env.production
 
+# API keys & secrets — NEVER commit
+api_keys.md
+
 # Extension generated config (values filled from .env)
 # Uncomment if you add a build step that auto-fills config.js:
 # extension/config.js
