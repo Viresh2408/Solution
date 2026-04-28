@@ -287,6 +287,18 @@ export function useTrainingModules() {
   return { modules, loading };
 }
 
+export async function createTrainingModule(moduleData) {
+  const { data, error } = await supabase.from('trainingModules').insert({
+    ...moduleData,
+    orgId: DEFAULT_ORG, // In prod, get from context
+    enrolled: 0,
+    completed: 0,
+    avgScore: 0,
+  });
+  if (error) throw error;
+  return data;
+}
+
 // ─────────────────────────────────────────────
 // 9. ATTACK DISTRIBUTION (derived from alerts)
 // ─────────────────────────────────────────────

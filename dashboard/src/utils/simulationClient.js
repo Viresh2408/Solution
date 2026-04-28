@@ -3,6 +3,8 @@
 // Key never leaves the server — this file has NO sensitive credentials.
 
 import { supabase } from '../supabase';
+import { functions } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
 
 const ORG_ID = 'apex-financial';
 
@@ -41,15 +43,9 @@ export const SIMULATION_TEMPLATES = [
 
 /**
  * Launch a phishing simulation campaign
- * Creates a database record, then calls the Edge Function to send emails
+ * Creates a database record, then calls the Firebase Cloud Function to send emails
  *
  * @param {Object} opts
- * @param {string} opts.templateId - 'payroll' | 'itReset' | 'ceoFraud'
- * @param {string} opts.name       - Campaign display name
- * @param {Array}  opts.targets    - [{ email, name, dept }] or count (uses mock targets if count)
- * @param {string} opts.fromEmail  - Verified SendGrid sender email
- * @param {string} opts.fromName   - Display name for sender
- * @returns {Promise<{ simulationId, sent, failed }>}
  */
 export async function launchSimulation({ templateId, name, targets, fromEmail, fromName }) {
   // 1. Create simulation record in Supabase first
@@ -58,7 +54,7 @@ export async function launchSimulation({ templateId, name, targets, fromEmail, f
     .insert({
       orgId: ORG_ID,
       name,
-      targets: Array.isArray(targets) ? targets.length : targets,
+      targets: Array.isArray(targets) ? targets.length : parseInt(targets),
       clicked:  0,
       reported: 0,
       failRate: 0,
@@ -75,23 +71,20 @@ export async function launchSimulation({ templateId, name, targets, fromEmail, f
   // 2. Resolve targets list
   const targetList = Array.isArray(targets)
     ? targets
-    : generateMockTargets(targets); // fallback for demo
+    : generateMockTargets(targets);
 
-  // 3. Call the Supabase Edge Function
+  // 3. Call the Firebase Cloud Function
   try {
-    const { data: result, error: fnErr } = await supabase.functions.invoke('sendSimulationEmail', {
-      body: {
-        simulationId,
-        templateId,
-        targets:     targetList,
-        orgId:       ORG_ID,
-        fromEmail,
-        fromName,
-        companyName: 'Apex Financial Services',
-      }
+    const sendSimulationEmail = httpsCallable(functions, 'sendSimulationEmail');
+    const { data: result } = await sendSimulationEmail({
+      simulationId,
+      templateId,
+      targets:     targetList,
+      orgId:       ORG_ID,
+      fromEmail,
+      fromName,
+      companyName: 'Apex Financial Services',
     });
-
-    if (fnErr) throw fnErr;
 
     console.log('[TrustNet] Simulation launched:', result);
     return { simulationId, ...result };

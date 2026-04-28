@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useTrainingModules, useEmployees, useSimulations } from '../hooks/useTrustNetData';
+import { useTrainingModules, useEmployees, useSimulations, createTrainingModule } from '../hooks/useTrustNetData';
 import { launchSimulation, SIMULATION_TEMPLATES } from '../utils/simulationClient';
 
 export default function Training() {
@@ -8,6 +8,7 @@ export default function Training() {
   const { simulations: simulationHistory } = useSimulations();
 
   const [showModal, setShowModal]     = useState(false);
+  const [showNewModuleModal, setShowNewModuleModal] = useState(false);
   const [selectedTpl, setSelectedTpl] = useState('payroll');
   const [targetCount, setTargetCount] = useState(25);
   const [fromEmail, setFromEmail]     = useState('security@yourcompany.com');
@@ -15,6 +16,11 @@ export default function Training() {
   const [launching, setLaunching]     = useState(false);
   const [launchResult, setLaunchResult] = useState(null);
   const [launchError, setLaunchError]   = useState('');
+
+  const [newModule, setNewModule] = useState({
+    title: '', category: '', difficulty: 'Beginner', icon: '🎓', color: '#00D9FF', duration: '15m'
+  });
+  const [addingModule, setAddingModule] = useState(false);
 
   const handleLaunch = async () => {
     const tpl = SIMULATION_TEMPLATES.find(t => t.id === selectedTpl);
@@ -34,6 +40,20 @@ export default function Training() {
       setLaunchError(err.message);
     } finally {
       setLaunching(false);
+    }
+  };
+
+  const handleAddModule = async () => {
+    if (!newModule.title) return;
+    setAddingModule(true);
+    try {
+      await createTrainingModule(newModule);
+      setShowNewModuleModal(false);
+      setNewModule({ title: '', category: '', difficulty: 'Beginner', icon: '🎓', color: '#00D9FF', duration: '15m' });
+    } catch (err) {
+      alert('Failed to add module: ' + err.message);
+    } finally {
+      setAddingModule(false);
     }
   };
 
@@ -70,7 +90,7 @@ export default function Training() {
         <div className="card">
           <div className="section-header mb-4">
             <div className="section-title">Training Catalog</div>
-            <button className="btn btn-primary btn-sm">+ New Module</button>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowNewModuleModal(true)}>+ New Module</button>
           </div>
           <div style={{display:'flex', flexDirection:'column', gap:'10px'}}>
             {trainingModules.map(module => (
@@ -88,10 +108,10 @@ export default function Training() {
                   <div className="module-progress-wrap">
                     <div style={{flex:1}}>
                       <div className="progress-bar">
-                        <div className="progress-fill" style={{width:`${Math.round(module.completed/module.enrolled*100)}%`, background:module.color}}></div>
+                        <div className="progress-fill" style={{width:`${module.enrolled > 0 ? Math.round(module.completed/module.enrolled*100) : 0}%`, background:module.color}}></div>
                       </div>
                     </div>
-                    <div className="module-pct">{Math.round(module.completed/module.enrolled*100)}%</div>
+                    <div className="module-pct">{module.enrolled > 0 ? Math.round(module.completed/module.enrolled*100) : 0}%</div>
                   </div>
                 </div>
                 <div style={{textAlign:'right', flexShrink:0}}>
@@ -236,6 +256,65 @@ export default function Training() {
               </div>
             </div>
           </div>
+      )}
+
+      {/* New Module Modal */}
+      {showNewModuleModal && (
+        <div style={{
+          position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', zIndex:1000,
+          display:'flex', alignItems:'center', justifyContent:'center', padding:'20px',
+        }} onClick={e => e.target === e.currentTarget && setShowNewModuleModal(false)}>
+          <div className="card glass fade-in" style={{ width:'100%', maxWidth:'450px', padding:'24px' }}>
+            <div style={{fontWeight:800, fontSize:'1.2rem', marginBottom:'20px', display:'flex', alignItems:'center', gap:'10px'}}>
+              <span>🆕</span> Add Training Module
+            </div>
+
+            <div style={{display:'flex', flexDirection:'column', gap:'16px'}}>
+              <div>
+                <div style={{fontSize:'0.75rem', color:'var(--text-2)', marginBottom:'6px'}}>MODULE TITLE</div>
+                <input type="text" className="header-search" style={{width:'100%', padding:'10px'}} placeholder="e.g. Advanced BEC Defense"
+                  value={newModule.title} onChange={e => setNewModule({...newModule, title: e.target.value})}/>
+              </div>
+
+              <div className="grid-2">
+                <div>
+                  <div style={{fontSize:'0.75rem', color:'var(--text-2)', marginBottom:'6px'}}>CATEGORY</div>
+                  <input type="text" className="header-search" style={{width:'100%', padding:'10px'}} placeholder="Email Security"
+                    value={newModule.category} onChange={e => setNewModule({...newModule, category: e.target.value})}/>
+                </div>
+                <div>
+                  <div style={{fontSize:'0.75rem', color:'var(--text-2)', marginBottom:'6px'}}>DIFFICULTY</div>
+                  <select className="header-search" style={{width:'100%', padding:'10px', background:'var(--bg-card)'}}
+                    value={newModule.difficulty} onChange={e => setNewModule({...newModule, difficulty: e.target.value})}>
+                    <option>Beginner</option>
+                    <option>Intermediate</option>
+                    <option>Advanced</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div>
+                  <div style={{fontSize:'0.75rem', color:'var(--text-2)', marginBottom:'6px'}}>ICON (EMOJI)</div>
+                  <input type="text" className="header-search" style={{width:'100%', padding:'10px'}}
+                    value={newModule.icon} onChange={e => setNewModule({...newModule, icon: e.target.value})}/>
+                </div>
+                <div>
+                  <div style={{fontSize:'0.75rem', color:'var(--text-2)', marginBottom:'6px'}}>DURATION</div>
+                  <input type="text" className="header-search" style={{width:'100%', padding:'10px'}}
+                    value={newModule.duration} onChange={e => setNewModule({...newModule, duration: e.target.value})}/>
+                </div>
+              </div>
+            </div>
+
+            <div style={{display:'flex', gap:'10px', justifyContent:'flex-end', marginTop:'24px'}}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowNewModuleModal(false)}>Cancel</button>
+              <button className="btn btn-primary btn-sm" onClick={handleAddModule} disabled={addingModule || !newModule.title}>
+                {addingModule ? 'Creating...' : 'Create Module'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* F8 — Red Team Multi-Vector Simulation Dashboard */}
