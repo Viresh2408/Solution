@@ -261,6 +261,12 @@
     // Monitor clicks
     setupClickMonitoring();
 
+    // F1 — Behavioral Biometrics (Agent 15)
+    setupBiometricTracking();
+
+    // F7 — Zero-Trust Credential Enforcer (Agent 19)
+    setupCredentialEnforcer();
+
     // Watch for new links (SPAs)
     const linkObserver = new MutationObserver(() => scanLinks());
     linkObserver.observe(document.body, { childList: true, subtree: true });
@@ -539,6 +545,256 @@
   }
 
   // ============================================================
+  // F1 — BEHAVIORAL BIOMETRICS TRACKER (Agent 15)
+  // ============================================================
+  function setupBiometricTracking() {
+    const sensitiveSelectors = [
+      'input[type="password"]',
+      'input[name*="otp"]', 'input[id*="otp"]',
+      'input[name*="pin"]', 'input[id*="pin"]',
+      'input[name*="card"]', 'input[id*="card"]',
+      'input[autocomplete="cc-number"]',
+      'input[autocomplete="current-password"]',
+    ];
+
+    document.querySelectorAll(sensitiveSelectors.join(',')).forEach(attachBiometricMonitor);
+
+    // Watch for dynamically added fields
+    const bioObserver = new MutationObserver(() => {
+      document.querySelectorAll(sensitiveSelectors.join(','))
+        .forEach(f => { if (!f._tnBioAttached) attachBiometricMonitor(f); });
+    });
+    bioObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function attachBiometricMonitor(field) {
+    if (field._tnBioAttached) return;
+    field._tnBioAttached = true;
+
+    const fieldType = field.type === 'password' ? 'password' : 'sensitive';
+    let typingIntervals = [];
+    let lastKeyTime = null;
+    let pasteCount = 0;
+    let copyCount  = 0;
+    const sessionStart = Date.now();
+
+    field.addEventListener('keydown', () => {
+      const now = Date.now();
+      if (lastKeyTime) typingIntervals.push(now - lastKeyTime);
+      lastKeyTime = now;
+      if (typingIntervals.length > 50) typingIntervals = typingIntervals.slice(-50);
+    });
+
+    field.addEventListener('paste', async () => {
+      pasteCount++;
+      // Report immediately on paste in password fields
+      if (fieldType === 'password' || pasteCount >= 2) {
+        const result = await chrome.runtime.sendMessage({
+          type: 'BIOMETRIC_EVENT',
+          event: { typingIntervals, pasteCount, copyCount, fieldType, sessionMs: Date.now() - sessionStart },
+        }).catch(() => null);
+
+        if (result && result.anomalyScore >= 60) {
+          showBiometricAlert(result.anomalyScore, result.triggerType);
+        }
+      }
+    });
+
+    document.addEventListener('copy', () => { copyCount++; });
+
+    field.addEventListener('blur', async () => {
+      if (typingIntervals.length < 3 && pasteCount === 0) return;
+      const result = await chrome.runtime.sendMessage({
+        type: 'BIOMETRIC_EVENT',
+        event: { typingIntervals, pasteCount, copyCount, fieldType, sessionMs: Date.now() - sessionStart },
+      }).catch(() => null);
+
+      if (result && result.anomalyScore >= 60) {
+        showBiometricAlert(result.anomalyScore, result.triggerType);
+      }
+    });
+  }
+
+  function showBiometricAlert(score, trigger) {
+    const existing = document.getElementById('tn-bio-alert');
+    if (existing) existing.remove();
+
+    const el = document.createElement('div');
+    el.id = 'tn-bio-alert';
+    el.style.cssText = `
+      position:fixed; top:16px; right:16px; z-index:2147483646;
+      background:linear-gradient(135deg,#1a0f00,#0d0a00);
+      border:1px solid #FFA502; border-radius:12px; padding:14px 18px;
+      font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;
+      color:#fff; max-width:300px; box-shadow:0 8px 30px rgba(255,165,2,0.35);
+      animation:popIn 0.25s cubic-bezier(0.4,0,0.2,1);
+    `;
+    const triggerLabel = {
+      paste_velocity: 'Paste velocity spike',
+      bot_typing_speed: 'Inhuman typing speed',
+      clipboard_cycling: 'Clipboard cycling',
+      erratic_timing: 'Erratic timing pattern',
+    }[trigger] || 'Anomalous input pattern';
+
+    el.innerHTML = `
+      <div style="font-weight:700;color:#FFA502;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+        🧬 Unusual Behavior Detected
+      </div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.7);line-height:1.5;margin-bottom:10px;">
+        Anomaly score: <strong style="color:#FFA502;">${score}/100</strong><br>
+        Trigger: <strong>${triggerLabel}</strong><br>
+        This session has been flagged for admin review.
+      </div>
+      <span style="font-size:11px;color:rgba(255,255,255,0.4);cursor:pointer;"
+        onclick="document.getElementById('tn-bio-alert').remove()">Dismiss ×</span>
+    `;
+    document.body.appendChild(el);
+    setTimeout(() => el?.remove(), 12000);
+  }
+
+  // ============================================================
+  // F5 — SESSION ALERT HANDLER (Tab-napping Banner)
+  // ============================================================
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'SESSION_ALERT') {
+      showSessionAlert(msg.detail);
+    }
+    if (msg.type === 'CREDENTIAL_UNBLOCK') {
+      removeCredentialBlockOverlay();
+      console.log('[POLICY] Credential submission unblocked by admin.');
+    }
+    if (msg.type === 'CREDENTIAL_DENIED') {
+      updateCredentialBlockOverlay('denied');
+    }
+  });
+
+  function showSessionAlert(detail) {
+    const existing = document.getElementById('tn-session-alert');
+    if (existing) return;
+
+    const el = document.createElement('div');
+    el.id = 'tn-session-alert';
+    el.style.cssText = `
+      position:fixed; top:0; left:0; right:0; z-index:2147483647;
+      background:linear-gradient(135deg,#1a0505,#0d0010);
+      border-bottom:2px solid #FF4757; padding:14px 20px;
+      font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;
+      display:flex; align-items:center; gap:16px;
+      box-shadow:0 4px 30px rgba(255,71,87,0.4);
+      animation:slideDown 0.3s cubic-bezier(0.4,0,0.2,1);
+    `;
+    el.innerHTML = `
+      <div style="font-size:20px;">🚨</div>
+      <div style="flex:1;">
+        <div style="font-weight:700;color:#FF4757;font-size:13px;margin-bottom:2px;">
+          Tab-napping Attempt Detected
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.65);">
+          This page (<strong style="color:#fff;">${detail.detected}</strong>) appears to impersonate 
+          <strong style="color:#FFA502;">${detail.realDomain}</strong>. 
+          Do NOT enter any credentials.
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0;">
+        <button onclick="window.close()" 
+          style="background:#FF4757;border:none;color:#fff;padding:7px 14px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">
+          Close This Tab
+        </button>
+        <button onclick="document.getElementById('tn-session-alert').remove()"
+          style="background:rgba(255,255,255,0.08);border:none;color:rgba(255,255,255,0.6);padding:7px 14px;border-radius:6px;cursor:pointer;font-size:12px;">
+          Dismiss
+        </button>
+      </div>
+    `;
+    document.body.prepend(el);
+  }
+
+  // ============================================================
+  // F7 — ZERO-TRUST CREDENTIAL ENFORCER (Agent 19)
+  // ============================================================
+  function setupCredentialEnforcer() {
+    document.addEventListener('submit', async (e) => {
+      if (!pageRisk || pageRisk.score < 50) return;
+
+      const form = e.target;
+      const hasPassword = form.querySelector('input[type="password"]');
+      const hasOTP      = form.querySelector('input[name*="otp"], input[id*="otp"], input[name*="pin"]');
+
+      if (!hasPassword && !hasOTP) return;
+
+      e.preventDefault();
+      e.stopImmediatePropagation();
+
+      const domain = window.location.hostname;
+      showCredentialBlockOverlay(domain, pageRisk.score, form);
+    }, true);
+  }
+
+  function showCredentialBlockOverlay(domain, riskScore, form) {
+    const existing = document.getElementById('tn-cred-block');
+    if (existing) return;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'tn-cred-block';
+    overlay.style.cssText = `
+      position:fixed; inset:0; z-index:2147483647;
+      background:rgba(0,0,0,0.92);
+      display:flex; align-items:center; justify-content:center;
+      font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;
+      animation:tnFadeIn 0.3s cubic-bezier(0.4,0,0.2,1);
+    `;
+    overlay.innerHTML = `
+      <div style="background:linear-gradient(135deg,#1a0005,#080014);border:2px solid #FF4757;
+        border-radius:20px;padding:40px;max-width:500px;width:90%;text-align:center;
+        box-shadow:0 0 80px rgba(255,71,87,0.3);">
+        <div style="font-size:3rem;margin-bottom:16px;">🔒</div>
+        <h2 style="color:#FF4757;font-size:1.3rem;font-weight:800;margin-bottom:12px;">
+          Credential Submission Blocked
+        </h2>
+        <p style="color:rgba(255,255,255,0.7);font-size:14px;line-height:1.6;margin-bottom:8px;">
+          This page (<strong style="color:#fff;">${domain}</strong>) has a risk score of 
+          <strong style="color:#FF4757;">${riskScore}/100</strong>.<br>
+          Submitting credentials here has been blocked by your organization's Zero-Trust policy.
+        </p>
+        <div id="tn-cred-status" style="margin:16px 0;font-size:13px;color:#FFA502;">
+          ⏳ Requesting admin override…
+        </div>
+        <div style="display:flex;gap:10px;justify-content:center;">
+          <button onclick="window.history.back()"
+            style="background:#FF4757;border:none;color:#fff;padding:10px 24px;border-radius:8px;font-weight:700;cursor:pointer;">
+            ← Go Back to Safety
+          </button>
+          <button onclick="document.getElementById('tn-cred-block').remove()"
+            style="background:rgba(255,255,255,0.08);border:none;color:rgba(255,255,255,0.5);padding:10px 18px;border-radius:8px;cursor:pointer;font-size:12px;">
+            Cancel Request
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Notify background — starts OTP creation + polling
+    chrome.runtime.sendMessage({
+      type: 'CREDENTIAL_BLOCK',
+      domain,
+      riskScore,
+    }).catch(() => {});
+  }
+
+  function removeCredentialBlockOverlay() {
+    document.getElementById('tn-cred-block')?.remove();
+  }
+
+  function updateCredentialBlockOverlay(status) {
+    const statusEl = document.getElementById('tn-cred-status');
+    if (!statusEl) return;
+    if (status === 'denied') {
+      statusEl.style.color = '#FF4757';
+      statusEl.textContent = '❌ Admin denied the override request.';
+    }
+  }
+
+  // ============================================================
   // UTILITIES
   // ============================================================
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -553,3 +809,4 @@
   }
 
 })();
+

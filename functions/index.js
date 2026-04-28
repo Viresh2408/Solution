@@ -185,13 +185,13 @@ exports.sendSimulationEmail = functions
     return results;
   });
 
+
+
 // ── Click Tracking HTTP endpoint ──────────────────────────────────────────────
 exports.trackSimulationClick = functions.https.onRequest(async (req, res) => {
   const { sim, email } = req.query;
   if (sim && email) {
     // Increment click counter in Firestore
-    const simRef = db.collection('organizations').where('id', '!=', '');
-    // Find the simulation across all orgs (simplified for MVP)
     const snapshot = await db.collectionGroup('simulations')
       .where('__name__', '>=', sim)
       .limit(1)
@@ -203,10 +203,96 @@ exports.trackSimulationClick = functions.https.onRequest(async (req, res) => {
         failRate: admin.firestore.FieldValue.increment(0), // recalculated below
       });
     }
-
     console.log(`[TrustNet] Simulation click: sim=${sim} email=${email}`);
   }
-
-  // Redirect to a safe landing page that educates the user
   res.redirect('https://stock-market-app-5ef5c.web.app/phishing-caught');
+});
+
+// ── Slack Notification ────────────────────────────────────────────────────────
+exports.notifySlack = functions
+  .runWith({ secrets: ['SLACK_WEBHOOK_URL'] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+    
+    const { alertId, type, severity, user, detail, orgId } = data;
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL || functions.config().slack?.webhook;
+
+    if (!webhookUrl) {
+      console.warn('[TrustNet] No Slack webhook configured');
+      return { success: false, error: 'No webhook' };
+    }
+
+    try {
+      const axios = require('axios');
+      const payload = {
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `🚨 *TrustNet Security Alert* | *${severity.toUpperCase()}*`,
+            },
+          },
+          {
+            type: 'section',
+            fields: [
+              { type: 'mrkdwn', text: `*Type:*\n${type}` },
+              { type: 'mrkdwn', text: `*User:*\n${user}` },
+              { type: 'mrkdwn', text: `*Organization:*\n${orgId}` },
+              { type: 'mrkdwn', text: `*Detail:*\n${detail}` },
+            ],
+          },
+          {
+            type: 'actions',
+            elements: [
+              {
+                type: 'button',
+                text: { type: 'plain_text', text: 'View Incident' },
+                url: `https://trustnet-dashboard.example.com/alerts?id=${alertId}`,
+                style: 'danger',
+              },
+            ],
+          },
+        ],
+      };
+
+      await axios.post(webhookUrl, payload);
+      console.log(`[TrustNet] Slack notified for alert=${alertId}`);
+      return { success: true };
+    } catch (err) {
+      console.error('[TrustNet] Slack notify failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+// ── Red Team Simulation Launcher ──────────────────────────────────────────────
+exports.launchRedTeamSimulation = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+
+  const { orgId, channels, targets, simId } = data;
+  console.log(`[TrustNet] Launching Red Team sim=${simId} for org=${orgId} via channels=${channels.join(',')}`);
+
+  // In production, this would trigger different worker jobs (SendGrid, Twilio, etc.)
+  // For MVP, we log the intent and return success
+  return { 
+    success: true, 
+    simId, 
+    startTime: new Date().toISOString(),
+    status: 'scheduled' 
+  };
+});
+
+// ── Weekly Report Generator ───────────────────────────────────────────────────
+exports.generateWeeklyReport = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+  
+  const { orgId } = data;
+  console.log(`[TrustNet] Generating weekly AI report for org=${orgId}`);
+
+  // In production, this would use Gemini 1.5 Flash to summarize the week's alerts
+  return { 
+    success: true, 
+    summary: 'AI summarization in progress...',
+    timestamp: new Date().toISOString() 
+  };
 });

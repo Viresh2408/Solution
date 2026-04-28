@@ -977,4 +977,478 @@ setInterval(async () => {
   state.vulnerabilityScore = score;
 }, CONFIG.UPDATE_INTERVAL_MS);
 
+// ============================================================
+// AGENT 15 — BEHAVIORAL BIOMETRICS ENGINE
+// ============================================================
+
+/**
+ * Handles biometric events from content.js
+ * Tracks paste velocity, typing speed jitter, rapid copy patterns
+ * Computes anomalyScore 0–100 and posts to Supabase biometric_events
+ */
+async function handleBiometricEvent(event) {
+  const profile = await chrome.storage.local.get(['profile']);
+  const orgId   = profile?.profile?.orgId   || 'apex-financial';
+  const user    = profile?.profile?.displayName || profile?.profile?.email || 'unknown';
+
+  const { typingIntervals = [], pasteCount = 0, copyCount = 0, fieldType = 'unknown', sessionMs = 0 } = event;
+
+  let anomalyScore = 0;
+  let triggerType  = 'normal';
+
+  // Paste velocity: more than 3 pastes in quick succession on a sensitive field
+  if (pasteCount >= 3) {
+    anomalyScore += 35;
+    triggerType = 'paste_velocity';
+  } else if (pasteCount >= 1 && fieldType === 'password') {
+    anomalyScore += 25;
+    triggerType = 'paste_velocity';
+  }
+
+  // Typing jitter: detect inhuman typing speed (< 30ms avg interval = bot)
+  if (typingIntervals.length >= 5) {
+    const avg = typingIntervals.reduce((a, b) => a + b, 0) / typingIntervals.length;
+    if (avg < 30) {
+      anomalyScore += 45;
+      triggerType = 'bot_typing_speed';
+    } else if (avg > 3000 && typingIntervals.length > 10) {
+      // Very slow and erratic — credential-stuffing pacing
+      anomalyScore += 20;
+      triggerType = 'erratic_timing';
+    }
+  }
+
+  // Rapid copy-paste cycle (clipboard hijack signal)
+  if (copyCount >= 2 && pasteCount >= 2 && sessionMs < 5000) {
+    anomalyScore += 30;
+    triggerType = 'clipboard_cycling';
+  }
+
+  anomalyScore = Math.min(100, anomalyScore);
+
+  const shortUser = user.split('@')[0];
+  console.log(`[BIO] user=${shortUser} anomaly_score=${anomalyScore} trigger=${triggerType}`);
+
+  // Post to Supabase biometric_events
+  try {
+    await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/biometric_events`, {
+      method: 'POST',
+      headers: {
+        'apikey': CONFIG.SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({
+        orgId,
+        employeeName: user,
+        anomalyScore,
+        triggerType,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+  } catch (err) {
+    console.warn('[BIO] Supabase write failed:', err.message);
+  }
+
+  // Return result so content.js can react
+  return { anomalyScore, triggerType };
+}
+
+// ============================================================
+// AGENT 16 — VISHING GUARD (Call Transcript Analyzer)
+// ============================================================
+
+/**
+ * Analyzes a call transcript for vishing patterns using Gemini
+ * Detects: urgency, authority impersonation, info harvesting, social engineering
+ */
+async function analyzeVishingTranscript(transcript) {
+  const callId = 'call_' + Date.now().toString(36);
+
+  const prompt = `You are a cybersecurity AI specializing in vishing (voice phishing) and social engineering detection.
+
+Analyze the following call transcript and return JSON ONLY (no markdown):
+{
+  "riskScore": <0-100>,
+  "riskLevel": <"SAFE"|"MEDIUM"|"HIGH"|"CRITICAL">,
+  "patterns": [<list of detected patterns like "authority_impersonation", "urgency_pressure", "info_harvesting", "fear_tactics", "pretexting">],
+  "signals": [<specific phrases or behaviors detected, as short strings>],
+  "summary": "<one sentence explanation>"
+}
+
+Call transcript:
+${transcript.slice(0, 3000)}`;
+
+  try {
+    const res = await fetch(`${CONFIG.GEMINI_ENDPOINT}?key=${CONFIG.GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 512, responseMimeType: 'application/json' },
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      const result = JSON.parse(raw.replace(/```json|```/g, '').trim());
+
+      const riskLevel = result.riskLevel || 'SAFE';
+      const topPattern = (result.patterns || [])[0] || 'unknown';
+      console.log(`[VISHING] call_id=${callId} risk=${riskLevel} pattern=${topPattern}`);
+
+      // Write to Supabase vishing_logs
+      const profile = await chrome.storage.local.get(['profile']);
+      const orgId   = profile?.profile?.orgId || 'apex-financial';
+      try {
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/vishing_logs`, {
+          method: 'POST',
+          headers: {
+            'apikey': CONFIG.SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({
+            orgId,
+            callId,
+            riskScore: result.riskScore || 0,
+            riskLevel,
+            signals: result.signals || [],
+            patterns: result.patterns || [],
+            summary: result.summary || '',
+            timestamp: new Date().toISOString(),
+          }),
+        });
+      } catch {}
+
+      return {
+        callId,
+        riskScore: Math.min(100, Math.max(0, result.riskScore || 0)),
+        riskLevel,
+        patterns: result.patterns || [],
+        signals:  result.signals  || [],
+        summary:  result.summary  || '',
+      };
+    }
+  } catch (err) {
+    console.warn('[VISHING] Gemini analysis failed:', err.message);
+  }
+
+  // Fallback: keyword heuristic
+  const text = transcript.toLowerCase();
+  let score = 0;
+  const patterns = [];
+  const signals  = [];
+
+  if (['urgent', 'immediately', 'right now', 'time is running out'].some(w => text.includes(w))) {
+    score += 30; patterns.push('urgency_pressure'); signals.push('Urgency language detected');
+  }
+  if (['bank', 'irs', 'income tax', 'police', 'rbi', 'ceo', 'manager'].some(w => text.includes(w))) {
+    score += 35; patterns.push('authority_impersonation'); signals.push('Authority figure claimed');
+  }
+  if (['otp', 'password', 'account number', 'pin', 'cvv', 'ssn', 'aadhaar'].some(w => text.includes(w))) {
+    score += 40; patterns.push('info_harvesting'); signals.push('Sensitive info requested');
+  }
+
+  const riskLevel = score >= 75 ? 'CRITICAL' : score >= 50 ? 'HIGH' : score >= 25 ? 'MEDIUM' : 'SAFE';
+  console.log(`[VISHING] call_id=${callId} risk=${riskLevel} pattern=${patterns[0] || 'none'} (heuristic)`);
+
+  return { callId, riskScore: score, riskLevel, patterns, signals, summary: 'Analyzed via local heuristics (Gemini unavailable).' };
+}
+
+// ============================================================
+// AGENT 17 — SESSION ANOMALY & TAB-NAPPING DETECTOR
+// ============================================================
+
+// Track recent tab opens for storm detection
+const _recentTabOpens = [];
+const KNOWN_BRANDS = ['paypal', 'google', 'amazon', 'apple', 'microsoft', 'netflix', 'bank', 'hdfc', 'sbi', 'icici'];
+
+chrome.tabs.onCreated.addListener(async (tab) => {
+  const now = Date.now();
+  _recentTabOpens.push(now);
+
+  // Keep only tabs opened in last 3 seconds
+  const recent = _recentTabOpens.filter(t => now - t < 3000);
+  _recentTabOpens.length = 0;
+  _recentTabOpens.push(...recent);
+
+  // Tab storm: 4+ tabs in 2 seconds
+  if (recent.length >= 4) {
+    console.log(`[SESSION] tab_storm_detected count=${recent.length} in last 3s`);
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'TrustNet AI — Tab Storm Detected',
+      message: `${recent.length} tabs opened in 3 seconds. Possible tab-napping attack.`,
+      priority: 2,
+    });
+  }
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete' || !tab.url) return;
+  if (!tab.url.startsWith('http')) return;
+
+  try {
+    const urlObj = new URL(tab.url);
+    const domain = urlObj.hostname.toLowerCase();
+
+    // Check for brand lookalike (homograph/typosquatting)
+    for (const brand of KNOWN_BRANDS) {
+      // Domain contains brand but is NOT the real brand domain
+      if (domain.includes(brand) &&
+          !domain.endsWith(`${brand}.com`) &&
+          !domain.endsWith(`${brand}.co.in`) &&
+          !domain.endsWith(`${brand}.in`) &&
+          !domain.endsWith(`${brand}.net`)) {
+
+        const suspectedReal = `${brand}.com`;
+        console.log(`[SESSION] tabnap_detected url=${domain} origin=${suspectedReal}`);
+
+        // Alert the user in the tab
+        chrome.tabs.sendMessage(tabId, {
+          type: 'SESSION_ALERT',
+          detail: {
+            detected: domain,
+            realDomain: suspectedReal,
+            brand,
+          },
+        }).catch(() => {});
+
+        // Log to Supabase alerts
+        const profile = await chrome.storage.local.get(['profile']);
+        const orgId   = profile?.profile?.orgId || 'apex-financial';
+        const user    = profile?.profile?.displayName || 'TrustNet Worker';
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/alerts`, {
+          method: 'POST',
+          headers: {
+            'apikey': CONFIG.SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=minimal',
+          },
+          body: JSON.stringify({
+            orgId,
+            type: 'Session Hijack',
+            severity: 'critical',
+            detail: `Tab-napping: lookalike domain ${domain} impersonates ${suspectedReal}`,
+            user,
+            dept: 'Operations',
+            blocked: true,
+            status: 'active',
+            timestamp: new Date().toISOString(),
+          }),
+        }).catch(() => {});
+
+        break;
+      }
+    }
+  } catch {}
+});
+
+// ============================================================
+// AGENT 18 — AI TRAINING CHATBOT
+// ============================================================
+
+/**
+ * Generates a quiz question based on the employee's recent threats
+ * Uses Gemini to create personalized cybersecurity training
+ */
+async function handleTrainingChat(message, history = []) {
+  const data = await chrome.storage.local.get(['sessionThreats', 'profile']);
+  const threats = (data.sessionThreats || []).slice(-5);
+  const user    = data.profile?.displayName || data.profile?.email?.split('@')[0] || 'Employee';
+
+  const threatContext = threats.length > 0
+    ? threats.map(t => `${t.type || 'THREAT'} on ${(t.tabUrl || '').replace(/^https?:\/\//, '').slice(0, 40)}`).join(', ')
+    : 'general phishing and social engineering';
+
+  const systemPrompt = `You are an expert cybersecurity trainer for TrustNet AI. Your job is to quiz employees on cybersecurity threats they recently encountered.
+
+Recent threats for this employee: ${threatContext}
+
+Rules:
+- Ask ONE focused multiple-choice question (A/B/C/D format)
+- If the user answered a previous question, first give brief feedback (correct/incorrect + one-sentence explanation), then ask the next question
+- Keep questions practical, not theoretical
+- Focus on: phishing recognition, social engineering, credential safety, safe browsing
+- End with "Score: X/Y" after 3 questions
+
+Conversation so far:
+${history.map(h => `${h.role === 'user' ? 'Employee' : 'Trainer'}: ${h.content}`).join('\n')}
+
+${message ? `Employee: ${message}` : 'Start the session with a quiz question.'}
+Trainer:`;
+
+  try {
+    const res = await fetch(`${CONFIG.GEMINI_ENDPOINT}?key=${CONFIG.GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: systemPrompt }] }],
+        generationConfig: { temperature: 0.4, maxOutputTokens: 400 },
+      }),
+    });
+
+    if (res.ok) {
+      const gemData = await res.json();
+      const reply = gemData.candidates?.[0]?.content?.parts?.[0]?.text || 'Could not generate question.';
+
+      // Check if session complete (score detected)
+      const scoreMatch = reply.match(/Score:\s*(\d+)\/(\d+)/i);
+      let score = null;
+      if (scoreMatch) {
+        score = Math.round((parseInt(scoreMatch[1]) / parseInt(scoreMatch[2])) * 100);
+        console.log(`[TRAINING] user=${user} score=${score} module=phishing_101 completed=true`);
+
+        // Update trainingModules in Supabase
+        const orgId = data.profile?.orgId || 'apex-financial';
+        await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/trainingModules?title=eq.Phishing Recognition&orgId=eq.${orgId}`, {
+          method: 'PATCH',
+          headers: {
+            'apikey': CONFIG.SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ completed: 1 }), // incremented server-side in prod
+        }).catch(() => {});
+      }
+
+      return { reply, score };
+    }
+  } catch (err) {
+    console.warn('[TRAINING] Gemini chat failed:', err.message);
+  }
+
+  return { reply: 'A phishing email typically uses which tactic?\nA) Casual, friendly language\nB) Urgency and fear to pressure action\nC) Detailed technical explanations\nD) Requests for general feedback', score: null };
+}
+
+// ============================================================
+// AGENT 19 — ZERO-TRUST CREDENTIAL ENFORCER
+// ============================================================
+
+/**
+ * Creates an override request in Supabase and generates an OTP
+ * Called when employee tries to submit credentials on a HIGH+ risk page
+ */
+async function createCredentialOverrideRequest(domain, riskScore) {
+  const profileData = await chrome.storage.local.get(['profile']);
+  const orgId = profileData?.profile?.orgId || 'apex-financial';
+  const user  = profileData?.profile?.displayName || profileData?.profile?.email || 'unknown';
+
+  // Generate 6-digit OTP via Web Crypto (secure random)
+  const otpArray = new Uint32Array(1);
+  crypto.getRandomValues(otpArray);
+  const otp = String(otpArray[0] % 1000000).padStart(6, '0');
+
+  console.log(`[POLICY] block=credential_submit user=${user.split('@')[0]} domain=${domain} awaiting_approval=true`);
+
+  let requestId = null;
+  try {
+    const res = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/override_requests`, {
+      method: 'POST',
+      headers: {
+        'apikey': CONFIG.SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+      },
+      body: JSON.stringify({
+        orgId,
+        employeeName: user,
+        domain,
+        riskScore,
+        status: 'pending',
+        otp,
+        requestedAt: new Date().toISOString(),
+      }),
+    });
+
+    if (res.ok) {
+      const rows = await res.json();
+      requestId = rows?.[0]?.id || null;
+    }
+  } catch (err) {
+    console.warn('[POLICY] Failed to create override request:', err.message);
+  }
+
+  return { requestId, otp, user, domain };
+}
+
+/**
+ * Poll Supabase for override approval
+ * Returns true if approved, false if denied or timeout
+ */
+async function pollForOverrideApproval(requestId, maxWaitMs = 120000) {
+  if (!requestId) return false;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise(r => setTimeout(r, 5000));
+    try {
+      const res = await fetch(
+        `${CONFIG.SUPABASE_URL}/rest/v1/override_requests?id=eq.${requestId}&select=status`,
+        {
+          headers: {
+            'apikey': CONFIG.SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${CONFIG.SUPABASE_ANON_KEY}`,
+          },
+        }
+      );
+      if (res.ok) {
+        const rows = await res.json();
+        const status = rows?.[0]?.status;
+        if (status === 'approved') {
+          console.log(`[POLICY] approved=true request_id=${requestId}`);
+          return true;
+        }
+        if (status === 'denied') {
+          console.log(`[POLICY] denied=true request_id=${requestId}`);
+          return false;
+        }
+      }
+    } catch {}
+  }
+
+  console.log(`[POLICY] override_timeout request_id=${requestId}`);
+  return false;
+}
+
+// ============================================================
+// EXTENDED MESSAGE HANDLER (Agents 15–19)
+// ============================================================
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  switch (message.type) {
+    case 'BIOMETRIC_EVENT':
+      handleBiometricEvent(message.event).then(sendResponse);
+      return true;
+
+    case 'ANALYZE_VISHING':
+      analyzeVishingTranscript(message.transcript).then(sendResponse);
+      return true;
+
+    case 'TRAINING_CHAT':
+      handleTrainingChat(message.userMessage, message.history || []).then(sendResponse);
+      return true;
+
+    case 'CREDENTIAL_BLOCK':
+      createCredentialOverrideRequest(message.domain, message.riskScore).then(async (result) => {
+        sendResponse(result);
+        // Start polling in background — notify content when approved
+        if (result.requestId && sender.tab?.id) {
+          const approved = await pollForOverrideApproval(result.requestId);
+          chrome.tabs.sendMessage(sender.tab.id, {
+            type: approved ? 'CREDENTIAL_UNBLOCK' : 'CREDENTIAL_DENIED',
+            requestId: result.requestId,
+          }).catch(() => {});
+        }
+      });
+      return true;
+  }
+});
+
 console.log('[TrustNet AI] Background service worker initialized. Privacy-preserving protection active.');

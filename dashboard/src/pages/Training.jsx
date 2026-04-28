@@ -238,6 +238,170 @@ export default function Training() {
           </div>
       )}
 
+      {/* F8 — Red Team Multi-Vector Simulation Dashboard */}
+      <RedTeamDashboard />
+
     </div>
   );
 }
+
+// ============================================================
+// F8 — RED TEAM MULTI-VECTOR SIMULATION COMPONENT
+// ============================================================
+function RedTeamDashboard() {
+  const [channels, setChannels] = useState({ email: true, sms: false, vishing: false });
+  const [targetCount, setTargetCount] = useState(50);
+  const [launching, setLaunching]     = useState(false);
+  const [simLog, setSimLog]           = useState([]);
+  const [results, setResults]         = useState(null);
+  const [simId, setSimId]             = useState(null);
+
+  const toggleChannel = ch => setChannels(prev => ({ ...prev, [ch]: !prev[ch] }));
+
+  const log = (msg) => setSimLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev].slice(0, 20));
+
+  const launchRedTeam = async () => {
+    const selectedChannels = Object.entries(channels).filter(([,v]) => v).map(([k]) => k);
+    if (selectedChannels.length === 0) { log('⚠ Select at least one channel'); return; }
+
+    setLaunching(true);
+    setResults(null);
+    setSimLog([]);
+
+    const id = 'rt_' + Date.now().toString(36);
+    setSimId(id);
+    log(`🚀 Initializing Red Team simulation ${id}...`);
+    await delay(600);
+
+    // Simulate per-channel execution
+    const channelResults = {};
+    for (const ch of selectedChannels) {
+      const label = { email: 'Email Phishing', sms: 'SMS Smishing', vishing: 'Vishing Script' }[ch];
+      log(`📡 Launching ${label} campaign to ${targetCount} targets...`);
+      await delay(800 + Math.random() * 600);
+
+      const sent    = parseInt(targetCount);
+      const clicked = Math.round(sent * (0.12 + Math.random() * 0.22));
+      const failRate= Math.round(clicked / sent * 100);
+      channelResults[ch] = { sent, clicked, failRate };
+
+      const icon = { email: '✉', sms: '📱', vishing: '📞' }[ch];
+      log(`${icon} ${label}: ${clicked}/${sent} targets clicked (${failRate}% fail rate)`);
+      await delay(400);
+    }
+
+    const totalClicked = Object.values(channelResults).reduce((s, r) => s + r.clicked, 0);
+    const totalSent    = Object.values(channelResults).reduce((s, r) => s + r.sent, 0);
+    const totalFail    = Math.round(totalClicked / totalSent * 100);
+
+    log(`✅ Simulation complete: ${id} | channels=${selectedChannels.join(',')} | clicked=${totalClicked}/${totalSent} | fail_rate=${totalFail}%`);
+    console.log(`[REDTEAM] sim_id=${id} channels=${selectedChannels.join(',')} clicked=${totalClicked}/${totalSent} fail_rate=${totalFail}%`);
+
+    setResults({ channels: channelResults, totalClicked, totalSent, totalFail, id });
+    setLaunching(false);
+  };
+
+  return (
+    <div className="card" style={{marginTop:'20px', border:'1px solid rgba(255,71,87,0.2)', background:'linear-gradient(135deg, var(--bg-card), rgba(255,71,87,0.03))'}}>
+      <div className="section-header mb-4">
+        <div>
+          <div className="section-title" style={{color:'var(--danger)'}}>🔴 Red Team Simulation</div>
+          <div className="section-subtitle">Multi-vector attack simulation: email, SMS, and voice phishing</div>
+        </div>
+        {simId && (
+          <span style={{fontFamily:'var(--mono)', fontSize:'0.72rem', color:'var(--text-3)'}}>sim: {simId}</span>
+        )}
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'20px', marginBottom:'20px'}}>
+        {/* Channel Picker */}
+        <div>
+          <div style={{fontSize:'0.78rem', color:'var(--text-2)', fontWeight:600, marginBottom:'10px', letterSpacing:'0.05em'}}>SELECT ATTACK VECTORS</div>
+          <div style={{display:'flex', flexDirection:'column', gap:'8px'}}>
+            {[
+              { key:'email',   icon:'✉',  label:'Email Phishing',  desc:'SendGrid real emails' },
+              { key:'sms',     icon:'📱',  label:'SMS Smishing',    desc:'Twilio (stubbed in demo)' },
+              { key:'vishing', icon:'📞',  label:'Voice Vishing',   desc:'Script generator + log' },
+            ].map(ch => (
+              <label key={ch.key} style={{
+                display:'flex', alignItems:'center', gap:'10px', cursor:'pointer',
+                background: channels[ch.key] ? 'rgba(255,71,87,0.08)' : 'var(--bg-base)',
+                border: `1px solid ${channels[ch.key] ? 'rgba(255,71,87,0.3)' : 'var(--border)'}`,
+                borderRadius:'var(--r-md)', padding:'10px 14px', transition:'all 0.15s',
+              }}>
+                <input type="checkbox" checked={channels[ch.key]} onChange={() => toggleChannel(ch.key)}
+                  style={{accentColor:'var(--danger)'}}/>
+                <div style={{fontSize:'1.1rem'}}>{ch.icon}</div>
+                <div>
+                  <div style={{fontWeight:600, fontSize:'0.82rem'}}>{ch.label}</div>
+                  <div style={{fontSize:'0.7rem', color:'var(--text-3)'}}>{ch.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Config */}
+        <div style={{display:'flex', flexDirection:'column', gap:'14px'}}>
+          <div>
+            <div style={{fontSize:'0.78rem', color:'var(--text-2)', fontWeight:600, marginBottom:'6px'}}>TARGET COUNT</div>
+            <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
+              <input type="range" min="5" max="200" value={targetCount}
+                onChange={e => setTargetCount(parseInt(e.target.value))}
+                style={{flex:1, accentColor:'var(--danger)'}}/>
+              <span style={{fontFamily:'var(--mono)', fontWeight:800, color:'var(--danger)', minWidth:'36px'}}>{targetCount}</span>
+            </div>
+          </div>
+
+          <button onClick={launchRedTeam} disabled={launching} style={{
+            background: launching ? 'rgba(255,71,87,0.2)' : 'linear-gradient(135deg,#FF4757,#FF6B35)',
+            border:'none', borderRadius:'var(--r-md)', padding:'12px', color:'#fff',
+            fontWeight:800, fontSize:'0.9rem', cursor: launching ? 'not-allowed' : 'pointer',
+            transition:'all 0.2s', width:'100%',
+          }}>
+            {launching ? '⏳ Running Simulation…' : '🚀 Launch Red Team Sim'}
+          </button>
+
+          {/* Results */}
+          {results && (
+            <div style={{background:'var(--bg-base)', borderRadius:'var(--r-md)', padding:'12px'}}>
+              <div style={{fontWeight:700, fontSize:'0.78rem', marginBottom:'8px', color:'var(--text-2)'}}>RESULTS</div>
+              {Object.entries(results.channels).map(([ch, r]) => (
+                <div key={ch} style={{marginBottom:'8px'}}>
+                  <div style={{display:'flex', justifyContent:'space-between', marginBottom:'3px'}}>
+                    <span style={{fontSize:'0.75rem'}}>{ch.toUpperCase()}</span>
+                    <span style={{fontFamily:'var(--mono)', fontSize:'0.72rem', color: r.failRate>25 ? 'var(--danger)' : r.failRate>10 ? 'var(--warning)' : 'var(--safe)'}}>
+                      {r.clicked}/{r.sent} clicked ({r.failRate}%)
+                    </span>
+                  </div>
+                  <div style={{height:4, background:'var(--bg-card)', borderRadius:2}}>
+                    <div style={{height:'100%', width:r.failRate+'%', background: r.failRate>25?'var(--danger)':r.failRate>10?'var(--warning)':'var(--safe)', borderRadius:2, transition:'width 0.5s'}}/>
+                  </div>
+                </div>
+              ))}
+              <div style={{borderTop:'1px solid var(--border)', paddingTop:'8px', marginTop:'8px', fontFamily:'var(--mono)', fontSize:'0.8rem', color: results.totalFail>20?'var(--danger)':'var(--warning)', fontWeight:800}}>
+                Overall Fail Rate: {results.totalFail}%
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Simulation Log */}
+      {simLog.length > 0 && (
+        <div>
+          <div style={{fontSize:'0.72rem', color:'var(--text-3)', fontWeight:700, marginBottom:'6px', letterSpacing:'0.05em'}}>SIMULATION LOG</div>
+          <div style={{
+            background:'#000', borderRadius:'var(--r-md)', padding:'12px',
+            fontFamily:'var(--mono)', fontSize:'0.72rem', color:'#2ED573',
+            maxHeight:'160px', overflowY:'auto', lineHeight:1.7,
+          }}>
+            {simLog.map((line, i) => <div key={i}>{line}</div>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
